@@ -436,6 +436,14 @@ const APPLE_CONTACTS_IMPORT_CFG: BatchImportConfig = BatchImportConfig {
 /// content-addressed storage, image enrichment, and visibility
 /// classification) and stays separate.
 #[cfg(target_os = "macos")]
+fn truncate_to_limit<T>(mut v: Vec<T>, limit: Option<usize>) -> Vec<T> {
+    if let Some(n) = limit {
+        v.truncate(n);
+    }
+    v
+}
+
+#[cfg(target_os = "macos")]
 async fn run_record_batch_import<T, E, J, ExtractErr>(
     progress_id: String,
     tracker: ProgressTracker,
@@ -590,23 +598,60 @@ async fn run_record_batch_import<T, E, J, ExtractErr>(
     let _ = tracker.save(&job).await;
 }
 
+/// Parse an Apple-import request body.
+///
+/// `Option<web::Json<T>>` swallows deserialization errors — that lets a
+/// missing Content-Type / empty body fall back to `T::default()` (the
+/// dogfood 2026-05-09 fix) but ALSO silently drops a body with unknown
+/// fields, which is how `{"limit": 5}` against `/notes` got eaten on
+/// 2026-05-11. Parsing the raw bytes ourselves gives both: empty body
+/// → default, malformed body / unknown field → 400 with a clear
+/// `serde_json` error.
+fn parse_apple_request_body<T>(bytes: &web::Bytes) -> Result<T, HttpResponse>
+where
+    T: Default + serde::de::DeserializeOwned,
+{
+    if bytes.is_empty() {
+        return Ok(T::default());
+    }
+    serde_json::from_slice(bytes).map_err(|e| {
+        HttpResponse::BadRequest().json(json!({
+            "success": false,
+            "error": "Invalid request payload",
+            "detail": e.to_string(),
+        }))
+    })
+}
+
+/// Request body for `POST /api/ingestion/apple-import/notes`.
+///
+/// `limit` caps how many notes are ingested. When `None`, imports the
+/// whole library. Set a low limit (e.g. 5) for a smoke test before
+/// committing the full library — Anthropic embedding spend on a 100+
+/// note library is non-trivial.
 #[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct AppleNotesRequest {
     pub folder: Option<String>,
+    pub limit: Option<usize>,
 }
 
 /// POST /api/ingestion/apple-import/notes
 ///
 /// Body is optional. Callers can POST with no Content-Type and no body to take
-/// the defaults (whole-library import); `Option<web::Json<_>>` falls back to
-/// the default struct on missing Content-Type or empty body.
+/// the defaults (whole-library import); empty body falls back to the default
+/// struct. A non-empty body with unknown fields 400s — see
+/// [`parse_apple_request_body`].
 pub async fn apple_import_notes(
-    request: Option<web::Json<AppleNotesRequest>>,
+    body: web::Bytes,
     state: web::Data<AppState>,
     ingestion_service: web::Data<IngestionServiceState>,
     progress_tracker: web::Data<ProgressTracker>,
 ) -> impl Responder {
-    let request = request.map(web::Json::into_inner).unwrap_or_default();
+    let request: AppleNotesRequest = match parse_apple_request_body(&body) {
+        Ok(r) => r,
+        Err(resp) => return resp,
+    };
     let AppleImportContext {
         user_id,
         node_arc,
@@ -627,15 +672,17 @@ pub async fn apple_import_notes(
     };
 
     let folder = request.folder.clone();
+    let limit = request.limit;
     let pid = progress_id.clone();
     spawn_apple_import_task(user_id, progress_id, move || async move {
-        run_apple_notes_import(folder, pid, tracker, node_arc, service).await;
+        run_apple_notes_import(folder, limit, pid, tracker, node_arc, service).await;
     })
 }
 
 #[cfg(target_os = "macos")]
 async fn run_apple_notes_import(
     folder: Option<String>,
+    limit: Option<usize>,
     progress_id: String,
     tracker: ProgressTracker,
     node_arc: std::sync::Arc<crate::fold_node::FoldNode>,
@@ -648,7 +695,7 @@ async fn run_apple_notes_import(
         node_arc,
         service,
         &APPLE_NOTES_IMPORT_CFG,
-        move || notes::extract(folder.as_deref()),
+        move || notes::extract(folder.as_deref()).map(|v| truncate_to_limit(v, limit)),
         notes::to_json_records,
     )
     .await;
@@ -657,6 +704,7 @@ async fn run_apple_notes_import(
 #[cfg(not(target_os = "macos"))]
 async fn run_apple_notes_import(
     _folder: Option<String>,
+    _limit: Option<usize>,
     progress_id: String,
     tracker: ProgressTracker,
     _node_arc: std::sync::Arc<crate::fold_node::FoldNode>,
@@ -665,21 +713,31 @@ async fn run_apple_notes_import(
     mark_apple_import_unavailable_on_non_macos(progress_id, tracker, "apple-notes").await;
 }
 
+/// Request body for `POST /api/ingestion/apple-import/reminders`.
+///
+/// `limit` caps how many reminders are ingested. When `None`, imports
+/// the whole library. Set a low limit (e.g. 5) for a smoke test before
+/// committing the full library.
 #[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct AppleRemindersRequest {
     pub list: Option<String>,
+    pub limit: Option<usize>,
 }
 
 /// POST /api/ingestion/apple-import/reminders
 ///
 /// Body is optional — see [`apple_import_notes`] for the rationale.
 pub async fn apple_import_reminders(
-    request: Option<web::Json<AppleRemindersRequest>>,
+    body: web::Bytes,
     state: web::Data<AppState>,
     ingestion_service: web::Data<IngestionServiceState>,
     progress_tracker: web::Data<ProgressTracker>,
 ) -> impl Responder {
-    let request = request.map(web::Json::into_inner).unwrap_or_default();
+    let request: AppleRemindersRequest = match parse_apple_request_body(&body) {
+        Ok(r) => r,
+        Err(resp) => return resp,
+    };
     let AppleImportContext {
         user_id,
         node_arc,
@@ -700,15 +758,17 @@ pub async fn apple_import_reminders(
     };
 
     let list = request.list.clone();
+    let limit = request.limit;
     let pid = progress_id.clone();
     spawn_apple_import_task(user_id, progress_id, move || async move {
-        run_apple_reminders_import(list, pid, tracker, node_arc, service).await;
+        run_apple_reminders_import(list, limit, pid, tracker, node_arc, service).await;
     })
 }
 
 #[cfg(target_os = "macos")]
 async fn run_apple_reminders_import(
     list: Option<String>,
+    limit: Option<usize>,
     progress_id: String,
     tracker: ProgressTracker,
     node_arc: std::sync::Arc<crate::fold_node::FoldNode>,
@@ -721,7 +781,7 @@ async fn run_apple_reminders_import(
         node_arc,
         service,
         &APPLE_REMINDERS_IMPORT_CFG,
-        move || reminders::extract(list.as_deref()),
+        move || reminders::extract(list.as_deref()).map(|v| truncate_to_limit(v, limit)),
         reminders::to_json_records,
     )
     .await;
@@ -755,6 +815,7 @@ fn build_reminders_final_job(
 #[cfg(not(target_os = "macos"))]
 async fn run_apple_reminders_import(
     _list: Option<String>,
+    _limit: Option<usize>,
     progress_id: String,
     tracker: ProgressTracker,
     _node_arc: std::sync::Arc<crate::fold_node::FoldNode>,
@@ -763,7 +824,14 @@ async fn run_apple_reminders_import(
     mark_apple_import_unavailable_on_non_macos(progress_id, tracker, "apple-reminders").await;
 }
 
+/// Request body for `POST /api/ingestion/apple-import/photos`.
+///
+/// `limit` caps how many photos are ingested. When `None`, defaults to
+/// 50 (photos are heavier than the other Apple sources, so the default
+/// stays bounded). Set a low limit (e.g. 5) for a smoke test before
+/// committing the full library.
 #[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct ApplePhotosRequest {
     pub album: Option<String>,
     pub limit: Option<usize>,
@@ -775,13 +843,16 @@ pub struct ApplePhotosRequest {
 /// provided, `limit` overrides the 50-photo default.
 // TODO: Apple Photos ingestion does not yet run face detection — face extraction in the generic ingestion path is a separate workstream that requires ONNX inline.
 pub async fn apple_import_photos(
-    request: Option<web::Json<ApplePhotosRequest>>,
+    body: web::Bytes,
     state: web::Data<AppState>,
     ingestion_service: web::Data<IngestionServiceState>,
     progress_tracker: web::Data<ProgressTracker>,
     upload_storage: web::Data<fold_db::storage::UploadStorage>,
 ) -> impl Responder {
-    let request = request.map(web::Json::into_inner).unwrap_or_default();
+    let request: ApplePhotosRequest = match parse_apple_request_body(&body) {
+        Ok(r) => r,
+        Err(resp) => return resp,
+    };
     let AppleImportContext {
         user_id,
         node_arc,
@@ -1037,21 +1108,31 @@ async fn run_apple_photos_import(
     mark_apple_import_unavailable_on_non_macos(progress_id, tracker, "apple-photos").await;
 }
 
+/// Request body for `POST /api/ingestion/apple-import/calendar`.
+///
+/// `limit` caps how many events are ingested. When `None`, imports the
+/// whole library. Set a low limit (e.g. 5) for a smoke test before
+/// committing the full library.
 #[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct AppleCalendarRequest {
     pub calendar: Option<String>,
+    pub limit: Option<usize>,
 }
 
 /// POST /api/ingestion/apple-import/calendar
 ///
 /// Body is optional — see [`apple_import_notes`] for the rationale.
 pub async fn apple_import_calendar(
-    request: Option<web::Json<AppleCalendarRequest>>,
+    body: web::Bytes,
     state: web::Data<AppState>,
     ingestion_service: web::Data<IngestionServiceState>,
     progress_tracker: web::Data<ProgressTracker>,
 ) -> impl Responder {
-    let request = request.map(web::Json::into_inner).unwrap_or_default();
+    let request: AppleCalendarRequest = match parse_apple_request_body(&body) {
+        Ok(r) => r,
+        Err(resp) => return resp,
+    };
     let AppleImportContext {
         user_id,
         node_arc,
@@ -1072,15 +1153,17 @@ pub async fn apple_import_calendar(
     };
 
     let calendar = request.calendar.clone();
+    let limit = request.limit;
     let pid = progress_id.clone();
     spawn_apple_import_task(user_id, progress_id, move || async move {
-        run_apple_calendar_import(calendar, pid, tracker, node_arc, service).await;
+        run_apple_calendar_import(calendar, limit, pid, tracker, node_arc, service).await;
     })
 }
 
 #[cfg(target_os = "macos")]
 async fn run_apple_calendar_import(
     calendar: Option<String>,
+    limit: Option<usize>,
     progress_id: String,
     tracker: ProgressTracker,
     node_arc: std::sync::Arc<crate::fold_node::FoldNode>,
@@ -1093,7 +1176,7 @@ async fn run_apple_calendar_import(
         node_arc,
         service,
         &APPLE_CALENDAR_IMPORT_CFG,
-        move || cal::extract(calendar.as_deref()),
+        move || cal::extract(calendar.as_deref()).map(|v| truncate_to_limit(v, limit)),
         cal::to_json_records,
     )
     .await;
@@ -1102,6 +1185,7 @@ async fn run_apple_calendar_import(
 #[cfg(not(target_os = "macos"))]
 async fn run_apple_calendar_import(
     _calendar: Option<String>,
+    _limit: Option<usize>,
     progress_id: String,
     tracker: ProgressTracker,
     _node_arc: std::sync::Arc<crate::fold_node::FoldNode>,
@@ -1110,18 +1194,30 @@ async fn run_apple_calendar_import(
     mark_apple_import_unavailable_on_non_macos(progress_id, tracker, "apple-calendar").await;
 }
 
+/// Request body for `POST /api/ingestion/apple-import/contacts`.
+///
+/// `limit` caps how many contacts are ingested. When `None`, imports
+/// the whole library. Set a low limit (e.g. 5) for a smoke test before
+/// committing the full library.
 #[derive(Deserialize, Default)]
-pub struct AppleContactsRequest {}
+#[serde(deny_unknown_fields)]
+pub struct AppleContactsRequest {
+    pub limit: Option<usize>,
+}
 
 /// POST /api/ingestion/apple-import/contacts
 ///
 /// Body is optional — see [`apple_import_notes`] for the rationale.
 pub async fn apple_import_contacts(
-    _request: Option<web::Json<AppleContactsRequest>>,
+    body: web::Bytes,
     state: web::Data<AppState>,
     ingestion_service: web::Data<IngestionServiceState>,
     progress_tracker: web::Data<ProgressTracker>,
 ) -> impl Responder {
+    let request: AppleContactsRequest = match parse_apple_request_body(&body) {
+        Ok(r) => r,
+        Err(resp) => return resp,
+    };
     let AppleImportContext {
         user_id,
         node_arc,
@@ -1141,14 +1237,16 @@ pub async fn apple_import_contacts(
         Err(response) => return response,
     };
 
+    let limit = request.limit;
     let pid = progress_id.clone();
     spawn_apple_import_task(user_id, progress_id, move || async move {
-        run_apple_contacts_import(pid, tracker, node_arc, service).await;
+        run_apple_contacts_import(limit, pid, tracker, node_arc, service).await;
     })
 }
 
 #[cfg(target_os = "macos")]
 async fn run_apple_contacts_import(
+    limit: Option<usize>,
     progress_id: String,
     tracker: ProgressTracker,
     node_arc: std::sync::Arc<crate::fold_node::FoldNode>,
@@ -1161,7 +1259,7 @@ async fn run_apple_contacts_import(
         node_arc,
         service,
         &APPLE_CONTACTS_IMPORT_CFG,
-        ctc::extract,
+        move || ctc::extract().map(|v| truncate_to_limit(v, limit)),
         ctc::to_json_records,
     )
     .await;
@@ -1169,6 +1267,7 @@ async fn run_apple_contacts_import(
 
 #[cfg(not(target_os = "macos"))]
 async fn run_apple_contacts_import(
+    _limit: Option<usize>,
     progress_id: String,
     tracker: ProgressTracker,
     _node_arc: std::sync::Arc<crate::fold_node::FoldNode>,
@@ -1691,22 +1790,65 @@ mod optional_body_tests {
     //! IngestionService, ProgressTracker). If anyone reverts the signature
     //! to bare `web::Json<T>`, the no-body case below 400s and the test
     //! fails.
-    use super::{AppleContactsRequest, ApplePhotosRequest};
+    use super::{
+        parse_apple_request_body, AppleCalendarRequest, AppleContactsRequest, AppleNotesRequest,
+        ApplePhotosRequest, AppleRemindersRequest,
+    };
     use actix_web::{test, web, App, HttpResponse, Responder};
     use serde_json::json;
 
-    async fn contacts_stub(req: Option<web::Json<AppleContactsRequest>>) -> impl Responder {
-        let _ = req.map(web::Json::into_inner).unwrap_or_default();
+    async fn contacts_stub(body: web::Bytes) -> impl Responder {
+        let req: AppleContactsRequest = match parse_apple_request_body(&body) {
+            Ok(r) => r,
+            Err(resp) => return resp,
+        };
         HttpResponse::Accepted().json(json!({
             "success": true,
             "progress_id": "test-progress-id",
+            "limit": req.limit,
         }))
     }
 
-    async fn photos_stub(req: Option<web::Json<ApplePhotosRequest>>) -> impl Responder {
-        let req = req.map(web::Json::into_inner).unwrap_or_default();
+    async fn photos_stub(body: web::Bytes) -> impl Responder {
+        let req: ApplePhotosRequest = match parse_apple_request_body(&body) {
+            Ok(r) => r,
+            Err(resp) => return resp,
+        };
         HttpResponse::Ok().json(json!({
             "album": req.album,
+            "limit": req.limit,
+        }))
+    }
+
+    async fn notes_stub(body: web::Bytes) -> impl Responder {
+        let req: AppleNotesRequest = match parse_apple_request_body(&body) {
+            Ok(r) => r,
+            Err(resp) => return resp,
+        };
+        HttpResponse::Ok().json(json!({
+            "folder": req.folder,
+            "limit": req.limit,
+        }))
+    }
+
+    async fn reminders_stub(body: web::Bytes) -> impl Responder {
+        let req: AppleRemindersRequest = match parse_apple_request_body(&body) {
+            Ok(r) => r,
+            Err(resp) => return resp,
+        };
+        HttpResponse::Ok().json(json!({
+            "list": req.list,
+            "limit": req.limit,
+        }))
+    }
+
+    async fn calendar_stub(body: web::Bytes) -> impl Responder {
+        let req: AppleCalendarRequest = match parse_apple_request_body(&body) {
+            Ok(r) => r,
+            Err(resp) => return resp,
+        };
+        HttpResponse::Ok().json(json!({
+            "calendar": req.calendar,
             "limit": req.limit,
         }))
     }
@@ -1756,6 +1898,76 @@ mod optional_body_tests {
         let body: serde_json::Value = test::read_body_json(resp).await;
         assert_eq!(body["limit"], 25);
         assert_eq!(body["album"], "Travel");
+    }
+
+    /// Dogfood 2026-05-11 regression: `{"limit": 5}` against
+    /// `/apple-import/notes` was silently ignored and the full library got
+    /// imported. Every Apple request struct must accept `limit` so a smoke
+    /// test stays a smoke test.
+    #[actix_web::test]
+    async fn every_apple_request_accepts_limit_field() {
+        let app = test::init_service(
+            App::new()
+                .route("/notes", web::post().to(notes_stub))
+                .route("/reminders", web::post().to(reminders_stub))
+                .route("/calendar", web::post().to(calendar_stub))
+                .route("/contacts", web::post().to(contacts_stub))
+                .route("/photos", web::post().to(photos_stub)),
+        )
+        .await;
+
+        for path in ["/notes", "/reminders", "/calendar", "/contacts", "/photos"] {
+            let req = test::TestRequest::post()
+                .uri(path)
+                .insert_header(("content-type", "application/json"))
+                .set_payload(r#"{"limit": 5}"#)
+                .to_request();
+            let resp = test::call_service(&app, req).await;
+            assert!(
+                resp.status().is_success(),
+                "{} should accept `limit`, got {}",
+                path,
+                resp.status(),
+            );
+            let body: serde_json::Value = test::read_body_json(resp).await;
+            assert_eq!(
+                body["limit"], 5,
+                "{} echoed limit incorrectly: {body}",
+                path,
+            );
+        }
+    }
+
+    /// `deny_unknown_fields` means a typo (`{"banana": 42}`) 400s with a
+    /// clear "unknown field" message instead of silently no-op'ing — the
+    /// other half of the dogfood 2026-05-11 fix.
+    #[actix_web::test]
+    async fn every_apple_request_rejects_unknown_fields() {
+        let app = test::init_service(
+            App::new()
+                .route("/notes", web::post().to(notes_stub))
+                .route("/reminders", web::post().to(reminders_stub))
+                .route("/calendar", web::post().to(calendar_stub))
+                .route("/contacts", web::post().to(contacts_stub))
+                .route("/photos", web::post().to(photos_stub)),
+        )
+        .await;
+
+        for path in ["/notes", "/reminders", "/calendar", "/contacts", "/photos"] {
+            let req = test::TestRequest::post()
+                .uri(path)
+                .insert_header(("content-type", "application/json"))
+                .set_payload(r#"{"banana": 42}"#)
+                .to_request();
+            let resp = test::call_service(&app, req).await;
+            assert_eq!(
+                resp.status(),
+                400,
+                "{} should 400 on unknown field, got {}",
+                path,
+                resp.status(),
+            );
+        }
     }
 }
 
