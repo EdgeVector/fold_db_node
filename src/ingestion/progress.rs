@@ -60,6 +60,12 @@ pub struct IngestionResults {
     pub mutations_executed: usize,
     /// All schemas and keys written during this ingestion (covers decomposition).
     pub schemas_written: Vec<SchemaWriteRecord>,
+    /// Distinct user-facing schema names this ingestion wrote into. Echoed back
+    /// so callers can `POST /api/query {"schema_name": <one of these>}` without
+    /// having to discover it through `GET /api/schemas`. Populated from
+    /// `schemas_written` plus `schema_name` (deduplicated).
+    #[serde(default)]
+    pub schemas_used: Vec<String>,
 }
 
 /// Helper struct to map generic Job to IngestionProgress shape for API compatibility

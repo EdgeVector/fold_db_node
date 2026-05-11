@@ -197,6 +197,10 @@ export interface IngestionResults {
   mutations_generated: number;
   mutations_executed: number;
   schemas_written?: SchemaWriteRecord[];
+  /** Distinct user-facing schema names this ingestion wrote into. Use this for
+   *  the "ingest → query" round-trip: any entry can be passed to /api/query as
+   *  `schema_name` without crawling /api/schemas to guess the LLM-chosen name. */
+  schemas_used?: string[];
 }
 
 /// Apple-import handlers (notes / reminders / photos / calendar / contacts)

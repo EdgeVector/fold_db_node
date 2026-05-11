@@ -1031,6 +1031,12 @@ export interface components {
             progress_id?: string | null;
             /** @description Name of the schema used (existing or newly created) */
             schema_used?: string | null;
+            /**
+             * @description Distinct user-facing schema names this ingestion wrote into. Echoed back
+             *     so callers can `POST /api/query {"schema_name": <one of these>}` without
+             *     first crawling `GET /api/schemas` to guess the LLM-chosen name.
+             */
+            schemas_used?: string[];
             /** @description All schemas and keys written during this ingestion */
             schemas_written: components["schemas"]["SchemaWriteRecord"][];
             /** @description Whether the ingestion was successful */

@@ -14,6 +14,8 @@ use crate::ingestion::apple_import;
 use crate::ingestion::apple_import::sync_scheduler::SyncConfigState;
 use crate::ingestion::ingestion_service::IngestionService;
 use crate::ingestion::progress::IngestionStep;
+#[cfg(target_os = "macos")]
+use crate::ingestion::progress::ProgressService;
 use crate::ingestion::service_state::IngestionServiceState;
 #[cfg(target_os = "macos")]
 use crate::ingestion::IngestionRequest;
@@ -29,6 +31,72 @@ use crate::server::routes::common::require_node;
 /// and `message` move.
 fn set_step(job: &mut Job, step: IngestionStep) {
     job.metadata = json!({ "step": step });
+}
+
+/// Result of synchronously running one Apple-import unit through the
+/// ingestion service.
+///
+/// Used by `run_apple_photos_import` (the one Apple source that runs the AI
+/// classifier rather than a forced canonical schema, so the schema name is
+/// LLM-dynamic per photo) to collect the distinct schema names the records
+/// landed in, so the outer job's `result.schemas_used` field can echo them
+/// back. Notes/Reminders/Calendar/Contacts pin a canonical name via
+/// `forced_schema_descriptive_name` (PR #946) so they don't need this dance.
+#[cfg(target_os = "macos")]
+#[derive(Default)]
+struct AppleBatchOutcome {
+    ingested: usize,
+    schemas_used: Vec<String>,
+    failure: Option<String>,
+}
+
+/// Drive one record (or batch) through the ingestion service synchronously
+/// and report schema names + ingested count. Uses a fresh inner progress id
+/// that is intentionally NOT pre-started in the tracker, so the pipeline's
+/// phase-percentage writes silently no-op (no orphan progress rows surface
+/// to the user) while the returned `IngestionResponse.schemas_used` still
+/// carries the schemas we need to surface on the outer job's result JSON.
+#[cfg(target_os = "macos")]
+async fn run_one_apple_batch(
+    request: IngestionRequest,
+    node: &crate::fold_node::FoldNode,
+    service: &IngestionService,
+    tracker: &ProgressTracker,
+    chunk_len: usize,
+) -> AppleBatchOutcome {
+    let inner_id = uuid::Uuid::new_v4().to_string();
+    let progress_service = ProgressService::new(tracker.clone());
+    match service
+        .process_json_with_node_and_progress(request, node, &progress_service, inner_id)
+        .await
+    {
+        Ok(resp) => AppleBatchOutcome {
+            ingested: chunk_len,
+            schemas_used: resp.schemas_used,
+            failure: None,
+        },
+        Err(e) => AppleBatchOutcome {
+            ingested: 0,
+            schemas_used: vec![],
+            failure: Some(e.to_string()),
+        },
+    }
+}
+
+/// Merge a batch outcome into the running aggregate (dedup schema names by
+/// insertion order so the final list reads the way the LLM picked them).
+#[cfg(target_os = "macos")]
+fn merge_batch_outcome(
+    aggregate_ingested: &mut usize,
+    aggregate_schemas: &mut Vec<String>,
+    outcome: AppleBatchOutcome,
+) {
+    *aggregate_ingested += outcome.ingested;
+    for s in outcome.schemas_used {
+        if !aggregate_schemas.contains(&s) {
+            aggregate_schemas.push(s);
+        }
+    }
 }
 
 /// GET /api/ingestion/apple-import/status
@@ -515,6 +583,8 @@ async fn run_record_batch_import<T, E, J, ExtractErr>(
             "source": cfg.job_kind,
             "total": 0,
             "ingested": 0,
+            // No records written -> no schemas touched.
+            "schemas_used": Vec::<String>::new(),
         }));
         set_step(&mut job, IngestionStep::Completed);
         mark_terminal(&mut job);
@@ -592,6 +662,18 @@ async fn run_record_batch_import<T, E, J, ExtractErr>(
         .await;
     }
 
+    // These sources pin a canonical schema name via
+    // `forced_schema_descriptive_name = cfg.app_name` (PR #946), so the schema
+    // we wrote into is deterministically `cfg.app_name`. Echo it in
+    // `schemas_used` so a caller can `POST /api/query {"schema_name": ...}`
+    // straight off the job result without crawling /api/schemas — same
+    // contract as the LLM-classified ingestion paths.
+    let schemas_used = if ingested > 0 {
+        vec![cfg.app_name.to_string()]
+    } else {
+        Vec::new()
+    };
+
     // Reminders routes through `build_reminders_final_job` so a total failure
     // surfaces as Failed/error_message instead of a green Completed/0 — see
     // PR #970. Notes/Calendar/Contacts treat partial success as Completed.
@@ -605,6 +687,7 @@ async fn run_record_batch_import<T, E, J, ExtractErr>(
                 "source": cfg.job_kind,
                 "total": total,
                 "ingested": ingested,
+                "schemas_used": schemas_used,
             }));
             set_step(&mut j, IngestionStep::Completed);
             j
@@ -612,7 +695,13 @@ async fn run_record_batch_import<T, E, J, ExtractErr>(
         BatchErrorPolicy::LogAndCaptureFirstError => {
             // Caller must use APPLE_REMINDERS_IMPORT_CFG here — the helper
             // hardcodes the "apple-reminders" job kind and tags step itself.
-            build_reminders_final_job(progress_id.clone(), total, ingested, ingest_error)
+            build_reminders_final_job(
+                progress_id.clone(),
+                total,
+                ingested,
+                schemas_used,
+                ingest_error,
+            )
         }
     };
     mark_terminal(&mut job);
@@ -819,6 +908,7 @@ fn build_reminders_final_job(
     progress_id: String,
     total: usize,
     ingested: usize,
+    schemas_used: Vec<String>,
     ingest_error: Option<String>,
 ) -> Job {
     let mut job = Job::new(progress_id, JobType::Other("apple-reminders".into()));
@@ -831,7 +921,12 @@ fn build_reminders_final_job(
         job.message = format!("Imported {} reminders", ingested);
         set_step(&mut job, IngestionStep::Completed);
     }
-    job.result = Some(json!({ "source": "apple-reminders", "total": total, "ingested": ingested }));
+    job.result = Some(json!({
+        "source": "apple-reminders",
+        "total": total,
+        "ingested": ingested,
+        "schemas_used": schemas_used,
+    }));
     job
 }
 
@@ -960,7 +1055,12 @@ async fn run_apple_photos_import(
         job.status = JobStatus::Completed;
         job.progress_percentage = 100;
         job.message = "No photos found".into();
-        job.result = Some(json!({ "source": "apple-photos", "total": 0, "ingested": 0 }));
+        job.result = Some(json!({
+            "source": "apple-photos",
+            "total": 0,
+            "ingested": 0,
+            "schemas_used": Vec::<String>::new(),
+        }));
         set_step(&mut job, IngestionStep::Completed);
         mark_terminal(&mut job);
         let _ = tracker.save(&job).await;
@@ -978,6 +1078,11 @@ async fn run_apple_photos_import(
     let node = node_arc.as_ref();
     let encryption_key = node.get_encryption_key();
     let mut ingested = 0;
+    // Photos route through the AI classifier (no `forced_schema_descriptive_name`),
+    // so the schema name is LLM-chosen and can vary per photo. Run each photo
+    // through the service synchronously to capture the schema names — the
+    // user needs them to query e.g. "Photography" without crawling /api/schemas.
+    let mut schemas_used: Vec<String> = Vec::new();
 
     for (i, path) in paths.iter().enumerate() {
         let file_path = path.to_path_buf();
@@ -1075,25 +1180,16 @@ async fn run_apple_photos_import(
                     forced_schema_descriptive_name: None,
                 };
 
-                match crate::handlers::ingestion::process_json(
-                    request,
-                    &fold_db::user_context::get_current_user_id().unwrap_or_default(),
-                    &tracker,
-                    node,
-                    service.clone(),
-                )
-                .await
-                {
-                    Ok(_) => ingested += 1,
-                    Err(e) => {
-                        tracing::warn!(
+                let outcome = run_one_apple_batch(request, node, &service, &tracker, 1).await;
+                if let Some(ref e) = outcome.failure {
+                    tracing::warn!(
                         target: "fold_node::ingestion",
-                                        "Failed to ingest photo {}: {}",
-                                        file_name,
-                                        e
-                                    );
-                    }
+                        "Failed to ingest photo {}: {}",
+                        file_name,
+                        e
+                    );
                 }
+                merge_batch_outcome(&mut ingested, &mut schemas_used, outcome);
             }
             Err(e) => {
                 tracing::warn!(
@@ -1118,7 +1214,12 @@ async fn run_apple_photos_import(
     job.status = JobStatus::Completed;
     job.progress_percentage = 100;
     job.message = format!("Imported {} photos", ingested);
-    job.result = Some(json!({ "source": "apple-photos", "total": total, "ingested": ingested }));
+    job.result = Some(json!({
+        "source": "apple-photos",
+        "total": total,
+        "ingested": ingested,
+        "schemas_used": schemas_used,
+    }));
     set_step(&mut job, IngestionStep::Completed);
     mark_terminal(&mut job);
     let _ = tracker.save(&job).await;
@@ -1482,7 +1583,8 @@ mod reminders_final_job_tests {
 
     #[test]
     fn success_marks_completed() {
-        let job = build_reminders_final_job("p1".into(), 10, 10, None);
+        let job =
+            build_reminders_final_job("p1".into(), 10, 10, vec!["Apple Reminders".into()], None);
         assert!(matches!(job.status, JobStatus::Completed));
         assert_eq!(job.message, "Imported 10 reminders");
         assert_eq!(job.progress_percentage, 100);
@@ -1491,6 +1593,10 @@ mod reminders_final_job_tests {
         assert_eq!(result["source"], "apple-reminders");
         assert_eq!(result["total"], 10);
         assert_eq!(result["ingested"], 10);
+        assert_eq!(
+            result["schemas_used"],
+            serde_json::json!(["Apple Reminders"])
+        );
     }
 
     #[test]
@@ -1501,6 +1607,7 @@ mod reminders_final_job_tests {
             "p2".into(),
             42,
             0,
+            vec![],
             Some("schema service unreachable".into()),
         );
         assert!(matches!(job.status, JobStatus::Failed));
@@ -1518,6 +1625,7 @@ mod reminders_final_job_tests {
         assert_eq!(result["source"], "apple-reminders");
         assert_eq!(result["total"], 42);
         assert_eq!(result["ingested"], 0);
+        assert_eq!(result["schemas_used"], serde_json::json!([]));
     }
 
     #[test]
@@ -1530,7 +1638,8 @@ mod reminders_final_job_tests {
         // `IngestionResults` struct and silently nulled the field whenever
         // the shape didn't match the file-ingest case.
         use crate::ingestion::progress::IngestionProgress;
-        let job = build_reminders_final_job("p4".into(), 7, 7, None);
+        let job =
+            build_reminders_final_job("p4".into(), 7, 7, vec!["Apple Reminders".into()], None);
         let progress: IngestionProgress = job.into();
         assert!(progress.is_complete);
         assert!(!progress.is_failed);
@@ -1540,15 +1649,36 @@ mod reminders_final_job_tests {
         assert_eq!(results["source"], "apple-reminders");
         assert_eq!(results["total"], 7);
         assert_eq!(results["ingested"], 7);
+        assert_eq!(
+            results["schemas_used"],
+            serde_json::json!(["Apple Reminders"])
+        );
     }
 
     #[test]
     fn empty_success_is_completed_not_failed() {
         // total=0, ingested=0, no error — this is a genuinely empty Reminders
         // list, not a failure. Job must be Completed so UI stays green.
-        let job = build_reminders_final_job("p3".into(), 0, 0, None);
+        let job = build_reminders_final_job("p3".into(), 0, 0, vec![], None);
         assert!(matches!(job.status, JobStatus::Completed));
         assert_eq!(job.message, "Imported 0 reminders");
+    }
+
+    #[test]
+    fn schemas_used_is_echoed_in_result_json() {
+        // Regression for the "ingest -> query" round-trip: a caller that gets
+        // back the apple-reminders job result must be able to read
+        // result.schemas_used[0] and pass it as `schema_name` to /api/query
+        // without first crawling /api/schemas to guess the (forced canonical)
+        // schema name.
+        let job =
+            build_reminders_final_job("p5".into(), 3, 3, vec!["Apple Reminders".into()], None);
+        let result = job.result.expect("result present");
+        let names = result["schemas_used"]
+            .as_array()
+            .expect("schemas_used is an array");
+        assert_eq!(names.len(), 1);
+        assert_eq!(names[0], "Apple Reminders");
     }
 }
 
@@ -2288,6 +2418,7 @@ mod step_metadata_tests {
             "p1".into(),
             42,
             0,
+            vec![],
             Some("schema service unreachable".into()),
         );
         let progress: IngestionProgress = job.into();
@@ -2304,7 +2435,8 @@ mod step_metadata_tests {
 
     #[test]
     fn reminders_final_job_success_carries_completed_step() {
-        let job = build_reminders_final_job("p2".into(), 10, 10, None);
+        let job =
+            build_reminders_final_job("p2".into(), 10, 10, vec!["Apple Reminders".into()], None);
         let progress: IngestionProgress = job.into();
         assert_eq!(progress.current_step, IngestionStep::Completed);
         assert_eq!(progress.progress_percentage, 100);

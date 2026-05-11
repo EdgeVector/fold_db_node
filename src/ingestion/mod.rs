@@ -134,6 +134,11 @@ pub struct IngestionResponse {
     pub errors: Vec<String>,
     /// All schemas and keys written during this ingestion
     pub schemas_written: Vec<SchemaWriteRecord>,
+    /// Distinct user-facing schema names this ingestion wrote into. Echoed back
+    /// so callers can `POST /api/query {"schema_name": <one of these>}` without
+    /// first crawling `GET /api/schemas` to guess the LLM-chosen name.
+    #[serde(default)]
+    pub schemas_used: Vec<String>,
 }
 
 impl IngestionResponse {
@@ -146,6 +151,10 @@ impl IngestionResponse {
         mutations_executed: usize,
         schemas_written: Vec<SchemaWriteRecord>,
     ) -> Self {
+        let schemas_used = crate::ingestion::ingestion_service::collect_schemas_used(
+            &schema_used,
+            &schemas_written,
+        );
         Self {
             success: true,
             progress_id: Some(progress_id),
@@ -154,6 +163,7 @@ impl IngestionResponse {
             mutations_generated,
             mutations_executed,
             schemas_written,
+            schemas_used,
             ..Default::default()
         }
     }

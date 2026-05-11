@@ -399,12 +399,14 @@ impl IngestionService {
         // Finalize: record file dedup + complete progress
         self.record_file_ingested(&request, node).await;
 
+        let schemas_used = collect_schemas_used(&schema_name, &schemas_written);
         let results = IngestionResults {
             schema_name: schema_name.clone(),
             new_schema_created,
             mutations_generated,
             mutations_executed,
             schemas_written: schemas_written.clone(),
+            schemas_used,
         };
         tracker.complete(results).await;
 
@@ -1010,6 +1012,30 @@ fn schemas_written_from_map(map: HashMap<String, Vec<KeyValue>>) -> Vec<SchemaWr
         .collect()
 }
 
+/// Distinct user-facing schema names this ingestion wrote into.
+///
+/// Includes the canonical `schema_name` (the AI-classified top-level schema)
+/// plus every `schemas_written[].schema_name` (covers decomposition into child
+/// schemas). Empty strings are filtered out so a no-op ingestion doesn't surface
+/// a phantom `""` entry. Order is stable for ergonomic output.
+pub(crate) fn collect_schemas_used(
+    schema_name: &str,
+    schemas_written: &[SchemaWriteRecord],
+) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    let mut push = |name: &str| {
+        if !name.is_empty() && seen.insert(name.to_string()) {
+            out.push(name.to_string());
+        }
+    };
+    push(schema_name);
+    for record in schemas_written {
+        push(&record.schema_name);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1117,6 +1143,41 @@ mod tests {
         let mut sorted = field_names.clone();
         sorted.sort();
         assert_eq!(field_names, sorted);
+    }
+
+    #[test]
+    fn collect_schemas_used_dedups_and_filters_empty() {
+        // Canonical schema_name leads, then schemas_written entries in order.
+        // Empty strings dropped (a no-op ingestion shouldn't emit `""`),
+        // duplicates collapsed.
+        let written = vec![
+            SchemaWriteRecord {
+                schema_name: "Photography".into(),
+                keys_written: vec![],
+            },
+            SchemaWriteRecord {
+                schema_name: "Faces".into(),
+                keys_written: vec![],
+            },
+            SchemaWriteRecord {
+                schema_name: "Photography".into(),
+                keys_written: vec![],
+            },
+            SchemaWriteRecord {
+                schema_name: "".into(),
+                keys_written: vec![],
+            },
+        ];
+        let names = collect_schemas_used("Photography", &written);
+        assert_eq!(names, vec!["Photography".to_string(), "Faces".to_string()]);
+
+        // Empty canonical name + non-empty children: only children listed.
+        let names = collect_schemas_used("", &written);
+        assert_eq!(names, vec!["Photography".to_string(), "Faces".to_string()]);
+
+        // Empty everything: no phantom entry.
+        let names = collect_schemas_used("", &[]);
+        assert!(names.is_empty());
     }
 
     #[test]
