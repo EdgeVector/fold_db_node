@@ -135,6 +135,31 @@ async fn apple_notes_consolidate_into_one_canonical_schema() {
             "record {} produced no executed mutations",
             i
         );
+        // The response must surface the user-facing descriptive_name —
+        // a caller pasting any of these values into `POST /api/query
+        // {"schema_name": ...}` must hit rows. The forced-schema path
+        // registers the schema under its descriptive_name, so resolution
+        // is the identity here; this assertion locks that contract in
+        // alongside the LLM-classifier path's resolver behavior.
+        assert_eq!(
+            response.schema_used.as_deref(),
+            Some("Apple Notes"),
+            "record {}: schema_used must be the descriptive_name",
+            i
+        );
+        assert_eq!(
+            response.schemas_used,
+            vec!["Apple Notes".to_string()],
+            "record {}: schemas_used must be exactly [\"Apple Notes\"]",
+            i
+        );
+        for w in &response.schemas_written {
+            assert_eq!(
+                w.schema_name, "Apple Notes",
+                "record {}: every SchemaWriteRecord must carry the descriptive_name",
+                i
+            );
+        }
     }
 
     // 5. Assert: one active schema with descriptive_name="Apple Notes" and
