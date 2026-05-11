@@ -13,11 +13,23 @@ use tracing::Instrument;
 use crate::ingestion::apple_import;
 use crate::ingestion::apple_import::sync_scheduler::SyncConfigState;
 use crate::ingestion::ingestion_service::IngestionService;
+use crate::ingestion::progress::IngestionStep;
 use crate::ingestion::service_state::IngestionServiceState;
 #[cfg(target_os = "macos")]
 use crate::ingestion::IngestionRequest;
 use crate::server::http_server::AppState;
 use crate::server::routes::common::require_node;
+
+/// Stamp `step` into the job's metadata so `IngestionProgress::From<Job>`
+/// surfaces `current_step` correctly instead of falling back to
+/// `IngestionStep::ValidatingConfig` (the source of the "Apple import looks
+/// frozen at 5%" dogfood bug observed 2026-05-11). Every save site in this
+/// module must call this before `tracker.save(&job).await` — otherwise
+/// `current_step` stays stuck on the default even as `progress_percentage`
+/// and `message` move.
+fn set_step(job: &mut Job, step: IngestionStep) {
+    job.metadata = json!({ "step": step });
+}
 
 /// GET /api/ingestion/apple-import/status
 /// Returns whether Apple import is available (macOS only).
@@ -156,6 +168,7 @@ async fn init_apple_import_job(
     job = job.with_user(user_id.clone());
     job.message = initial_message.into();
     job.progress_percentage = 5;
+    set_step(&mut job, IngestionStep::ValidatingConfig);
     let _ = tracker.save(&job).await;
 
     Ok(AppleImportContext {
@@ -206,6 +219,7 @@ async fn mark_apple_import_unavailable_on_non_macos(
 ) {
     let mut job = Job::new(progress_id, JobType::Other(job_kind.into()));
     mark_failed(&mut job, "Apple import is only available on macOS".into());
+    set_step(&mut job, IngestionStep::Failed);
     mark_terminal(&mut job);
     let _ = tracker.save(&job).await;
 }
@@ -268,6 +282,7 @@ async fn emit_batch_progress(
     job.status = JobStatus::Running;
     job.progress_percentage = ingestion_progress_pct(ingested, total);
     job.message = format!("Ingested {}/{} {}...", ingested, total, item_label);
+    set_step(&mut job, IngestionStep::ExecutingMutations);
     let _ = tracker.save(&job).await;
 }
 
@@ -315,6 +330,7 @@ where
                 job.status = JobStatus::Running;
                 job.progress_percentage = 5;
                 job.message = format!("{} ({}s)", msg, elapsed);
+                set_step(&mut job, IngestionStep::FlatteningData);
                 let _ = tracker_clone.save(&job).await;
             }
         }
@@ -475,6 +491,7 @@ async fn run_record_batch_import<T, E, J, ExtractErr>(
                 &mut job,
                 format!("Failed to extract {}: {}", cfg.terminal_label, e),
             );
+            set_step(&mut job, IngestionStep::Failed);
             mark_terminal(&mut job);
             let _ = tracker.save(&job).await;
             return;
@@ -482,6 +499,7 @@ async fn run_record_batch_import<T, E, J, ExtractErr>(
         Err(e) => {
             let mut job = Job::new(progress_id.clone(), JobType::Other(cfg.job_kind.into()));
             mark_failed(&mut job, format!("Extraction task panicked: {}", e));
+            set_step(&mut job, IngestionStep::Failed);
             mark_terminal(&mut job);
             let _ = tracker.save(&job).await;
             return;
@@ -498,6 +516,7 @@ async fn run_record_batch_import<T, E, J, ExtractErr>(
             "total": 0,
             "ingested": 0,
         }));
+        set_step(&mut job, IngestionStep::Completed);
         mark_terminal(&mut job);
         let _ = tracker.save(&job).await;
         return;
@@ -510,6 +529,7 @@ async fn run_record_batch_import<T, E, J, ExtractErr>(
     job.status = JobStatus::Running;
     job.progress_percentage = 10;
     job.message = format!("Extracted {} {}, ingesting...", total, cfg.progress_label);
+    set_step(&mut job, IngestionStep::GettingAIRecommendation);
     let _ = tracker.save(&job).await;
 
     let batch_size = 10;
@@ -586,11 +606,12 @@ async fn run_record_batch_import<T, E, J, ExtractErr>(
                 "total": total,
                 "ingested": ingested,
             }));
+            set_step(&mut j, IngestionStep::Completed);
             j
         }
         BatchErrorPolicy::LogAndCaptureFirstError => {
             // Caller must use APPLE_REMINDERS_IMPORT_CFG here — the helper
-            // hardcodes the "apple-reminders" job kind.
+            // hardcodes the "apple-reminders" job kind and tags step itself.
             build_reminders_final_job(progress_id.clone(), total, ingested, ingest_error)
         }
     };
@@ -804,9 +825,11 @@ fn build_reminders_final_job(
     job.progress_percentage = 100;
     if let Some(err) = ingest_error {
         mark_failed(&mut job, format!("Reminders ingestion failed: {}", err));
+        set_step(&mut job, IngestionStep::Failed);
     } else {
         job.status = JobStatus::Completed;
         job.message = format!("Imported {} reminders", ingested);
+        set_step(&mut job, IngestionStep::Completed);
     }
     job.result = Some(json!({ "source": "apple-reminders", "total": total, "ingested": ingested }));
     job
@@ -917,6 +940,7 @@ async fn run_apple_photos_import(
         Ok(Err(e)) => {
             let mut job = Job::new(progress_id.clone(), JobType::Other("apple-photos".into()));
             mark_failed(&mut job, format!("Failed to export photos: {}", e));
+            set_step(&mut job, IngestionStep::Failed);
             mark_terminal(&mut job);
             let _ = tracker.save(&job).await;
             return;
@@ -924,6 +948,7 @@ async fn run_apple_photos_import(
         Err(e) => {
             let mut job = Job::new(progress_id.clone(), JobType::Other("apple-photos".into()));
             mark_failed(&mut job, format!("Export task panicked: {}", e));
+            set_step(&mut job, IngestionStep::Failed);
             mark_terminal(&mut job);
             let _ = tracker.save(&job).await;
             return;
@@ -936,6 +961,7 @@ async fn run_apple_photos_import(
         job.progress_percentage = 100;
         job.message = "No photos found".into();
         job.result = Some(json!({ "source": "apple-photos", "total": 0, "ingested": 0 }));
+        set_step(&mut job, IngestionStep::Completed);
         mark_terminal(&mut job);
         let _ = tracker.save(&job).await;
         return;
@@ -946,6 +972,7 @@ async fn run_apple_photos_import(
     job.status = JobStatus::Running;
     job.progress_percentage = 30;
     job.message = format!("Exported {} photos, uploading...", total);
+    set_step(&mut job, IngestionStep::GettingAIRecommendation);
     let _ = tracker.save(&job).await;
 
     let node = node_arc.as_ref();
@@ -1083,6 +1110,7 @@ async fn run_apple_photos_import(
         job.status = JobStatus::Running;
         job.progress_percentage = pct as u8;
         job.message = format!("Ingesting {}/{} photos...", i + 1, total);
+        set_step(&mut job, IngestionStep::ExecutingMutations);
         let _ = tracker.save(&job).await;
     }
 
@@ -1091,6 +1119,7 @@ async fn run_apple_photos_import(
     job.progress_percentage = 100;
     job.message = format!("Imported {} photos", ingested);
     job.result = Some(json!({ "source": "apple-photos", "total": total, "ingested": ingested }));
+    set_step(&mut job, IngestionStep::Completed);
     mark_terminal(&mut job);
     let _ = tracker.save(&job).await;
 }
@@ -2094,5 +2123,191 @@ mod batch_import_config_tests {
         assert_eq!(APPLE_REMINDERS_IMPORT_CFG.job_kind, "apple-reminders");
         assert_eq!(APPLE_CALENDAR_IMPORT_CFG.job_kind, "apple-calendar");
         assert_eq!(APPLE_CONTACTS_IMPORT_CFG.job_kind, "apple-contacts");
+    }
+}
+
+/// Regression tests for the 2026-05-11 dogfood bug: every Apple import
+/// showed `current_step: ValidatingConfig` at `progress_percentage: 5`
+/// for the entire 30–90s extraction window. Root cause: every save site
+/// created a `Job::new(...)` without step metadata, so
+/// `IngestionProgress::From<Job>` always fell back to ValidatingConfig.
+#[cfg(test)]
+mod step_metadata_tests {
+    use super::{
+        build_reminders_final_job, ingestion_progress_pct, set_step, APPLE_NOTES_IMPORT_CFG,
+    };
+    use crate::ingestion::progress::{IngestionProgress, IngestionStep};
+    use fold_db::progress::{Job, JobStatus, JobType};
+
+    fn job_step(job: Job) -> IngestionStep {
+        let progress: IngestionProgress = job.into();
+        progress.current_step
+    }
+
+    fn make_job(kind: &str) -> Job {
+        Job::new("p1".into(), JobType::Other(kind.into()))
+    }
+
+    #[test]
+    fn set_step_round_trips_through_ingestion_progress() {
+        // The core fix: `set_step` writes metadata such that
+        // `IngestionProgress::From<Job>` picks it up. Without this, every
+        // Apple-import save left `current_step` defaulted to ValidatingConfig.
+        let mut job = make_job("apple-notes");
+        set_step(&mut job, IngestionStep::ExecutingMutations);
+        assert_eq!(job_step(job), IngestionStep::ExecutingMutations);
+    }
+
+    #[test]
+    fn set_step_writes_every_variant_we_use_in_apple_imports() {
+        // Lock the variants the apple-import save sites actually emit.
+        // If any of these stop round-tripping, the From<Job> impl in
+        // progress.rs has drifted and the UI would silently regress.
+        for step in [
+            IngestionStep::ValidatingConfig,
+            IngestionStep::FlatteningData,
+            IngestionStep::GettingAIRecommendation,
+            IngestionStep::ExecutingMutations,
+            IngestionStep::Completed,
+            IngestionStep::Failed,
+        ] {
+            let mut job = make_job("apple-notes");
+            set_step(&mut job, step.clone());
+            assert_eq!(
+                job_step(job),
+                step,
+                "step variant did not round-trip through metadata",
+            );
+        }
+    }
+
+    #[test]
+    fn ladder_for_132_note_import_never_freezes_at_validating_config() {
+        // The dogfood scenario: 132 Apple Notes, batch_size 10 → 14
+        // batches. Replays the sequence of progress writes the runtime
+        // would emit and asserts that — after the initial preflight save —
+        // every subsequent save advances either `step` off ValidatingConfig
+        // or `progress_percentage` above 5%. Before the fix, every save
+        // looked frozen at (ValidatingConfig, 5%) until the very end.
+        let total = 132usize;
+        let batch_size = 10usize;
+        let cfg = &APPLE_NOTES_IMPORT_CFG;
+
+        let mut ladder: Vec<(IngestionStep, u8)> = Vec::new();
+
+        // 1. init_apple_import_job
+        let mut j = make_job(cfg.job_kind);
+        j.status = JobStatus::Running;
+        j.progress_percentage = 5;
+        set_step(&mut j, IngestionStep::ValidatingConfig);
+        ladder.push((job_step(j.clone()), j.progress_percentage));
+
+        // 2. heartbeat ticks during AppleScript. Percentage stays at 5
+        //    (that's the documented contract — the AppleScript export is
+        //    one opaque call) but step moves to FlatteningData so the API
+        //    doesn't look frozen on ValidatingConfig.
+        for _ in 0..3 {
+            let mut j = make_job(cfg.job_kind);
+            j.status = JobStatus::Running;
+            j.progress_percentage = 5;
+            set_step(&mut j, IngestionStep::FlatteningData);
+            ladder.push((job_step(j.clone()), j.progress_percentage));
+        }
+
+        // 3. post-extract, pre-batch
+        let mut j = make_job(cfg.job_kind);
+        j.status = JobStatus::Running;
+        j.progress_percentage = 10;
+        set_step(&mut j, IngestionStep::GettingAIRecommendation);
+        ladder.push((job_step(j.clone()), j.progress_percentage));
+
+        // 4. per-batch loop
+        let total_batches = total.div_ceil(batch_size);
+        for i in 0..total_batches {
+            let ingested = ((i + 1) * batch_size).min(total);
+            let mut j = make_job(cfg.job_kind);
+            j.status = JobStatus::Running;
+            j.progress_percentage = ingestion_progress_pct(ingested, total);
+            set_step(&mut j, IngestionStep::ExecutingMutations);
+            ladder.push((job_step(j.clone()), j.progress_percentage));
+        }
+
+        // 5. terminal Completed
+        let mut j = make_job(cfg.job_kind);
+        j.status = JobStatus::Completed;
+        j.progress_percentage = 100;
+        set_step(&mut j, IngestionStep::Completed);
+        ladder.push((job_step(j.clone()), j.progress_percentage));
+
+        // Sanity: after the first save, no entry is allowed to look
+        // frozen at (ValidatingConfig, 5%). That's the exact dogfood
+        // symptom and the regression this whole module guards against.
+        for (idx, (step, pct)) in ladder.iter().enumerate().skip(1) {
+            assert!(
+                *step != IngestionStep::ValidatingConfig || *pct > 5,
+                "ladder[{}] = ({:?}, {}%) — looks frozen at (ValidatingConfig, 5%)",
+                idx,
+                step,
+                pct,
+            );
+        }
+
+        // At least one mid-flight save must have a percentage strictly
+        // greater than 5 — that's the bar moving past the "is the job
+        // hung?" threshold the user was staring at.
+        let max_mid_pct = ladder
+            .iter()
+            .skip(1)
+            .map(|(_, p)| *p)
+            .max()
+            .unwrap_or(0);
+        assert!(
+            max_mid_pct > 5,
+            "no save in the 132-note ladder advanced past 5%: {:?}",
+            ladder,
+        );
+
+        // Percentage is non-decreasing through the whole ladder.
+        for w in ladder.windows(2) {
+            assert!(
+                w[0].1 <= w[1].1,
+                "non-monotonic progress: {:?} -> {:?}",
+                w[0],
+                w[1],
+            );
+        }
+
+        // Terminal save is Completed at 100%.
+        assert_eq!(*ladder.last().unwrap(), (IngestionStep::Completed, 100));
+    }
+
+    #[test]
+    fn reminders_final_job_failure_carries_failed_step_and_error_hint() {
+        // The Contacts-timeout dogfood symptom touched the failure path
+        // too: even with a helpful error message, `current_step` stayed
+        // on ValidatingConfig. build_reminders_final_job (and the parallel
+        // mark_failed sites in other handlers) must now stamp Failed.
+        let job = build_reminders_final_job(
+            "p1".into(),
+            42,
+            0,
+            Some("schema service unreachable".into()),
+        );
+        let progress: IngestionProgress = job.into();
+        assert_eq!(progress.current_step, IngestionStep::Failed);
+        assert!(progress.is_failed);
+        assert!(
+            progress.status_message.contains("schema service unreachable"),
+            "error hint must reach status_message — got: {}",
+            progress.status_message,
+        );
+    }
+
+    #[test]
+    fn reminders_final_job_success_carries_completed_step() {
+        let job = build_reminders_final_job("p2".into(), 10, 10, None);
+        let progress: IngestionProgress = job.into();
+        assert_eq!(progress.current_step, IngestionStep::Completed);
+        assert_eq!(progress.progress_percentage, 100);
     }
 }
