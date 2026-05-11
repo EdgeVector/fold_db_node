@@ -19,6 +19,7 @@ use crate::ingestion::progress::ProgressService;
 use crate::ingestion::service_state::IngestionServiceState;
 #[cfg(target_os = "macos")]
 use crate::ingestion::IngestionRequest;
+use crate::ingestion::ProgressTrackerExt;
 use crate::server::http_server::AppState;
 use crate::server::routes::common::require_node;
 
@@ -237,7 +238,7 @@ async fn init_apple_import_job(
     job.message = initial_message.into();
     job.progress_percentage = 5;
     set_step(&mut job, IngestionStep::ValidatingConfig);
-    let _ = tracker.save(&job).await;
+    tracker.save_or_warn(&job).await;
 
     Ok(AppleImportContext {
         user_id,
@@ -289,7 +290,7 @@ async fn mark_apple_import_unavailable_on_non_macos(
     mark_failed(&mut job, "Apple import is only available on macOS".into());
     set_step(&mut job, IngestionStep::Failed);
     mark_terminal(&mut job);
-    let _ = tracker.save(&job).await;
+    tracker.save_or_warn(&job).await;
 }
 
 /// Spawn `work` on the runtime under the caller's user context and return the
@@ -351,7 +352,7 @@ async fn emit_batch_progress(
     job.progress_percentage = ingestion_progress_pct(ingested, total);
     job.message = format!("Ingested {}/{} {}...", ingested, total, item_label);
     set_step(&mut job, IngestionStep::ExecutingMutations);
-    let _ = tracker.save(&job).await;
+    tracker.save_or_warn(&job).await;
 }
 
 /// Run `work` while emitting a 2s heartbeat that re-saves the same 5%-progress
@@ -399,7 +400,7 @@ where
                 job.progress_percentage = 5;
                 job.message = format!("{} ({}s)", msg, elapsed);
                 set_step(&mut job, IngestionStep::FlatteningData);
-                let _ = tracker_clone.save(&job).await;
+                tracker_clone.save_or_warn(&job).await;
             }
         }
         .instrument(tracing::Span::current()),
@@ -561,7 +562,7 @@ async fn run_record_batch_import<T, E, J, ExtractErr>(
             );
             set_step(&mut job, IngestionStep::Failed);
             mark_terminal(&mut job);
-            let _ = tracker.save(&job).await;
+            tracker.save_or_warn(&job).await;
             return;
         }
         Err(e) => {
@@ -569,7 +570,7 @@ async fn run_record_batch_import<T, E, J, ExtractErr>(
             mark_failed(&mut job, format!("Extraction task panicked: {}", e));
             set_step(&mut job, IngestionStep::Failed);
             mark_terminal(&mut job);
-            let _ = tracker.save(&job).await;
+            tracker.save_or_warn(&job).await;
             return;
         }
     };
@@ -588,7 +589,7 @@ async fn run_record_batch_import<T, E, J, ExtractErr>(
         }));
         set_step(&mut job, IngestionStep::Completed);
         mark_terminal(&mut job);
-        let _ = tracker.save(&job).await;
+        tracker.save_or_warn(&job).await;
         return;
     }
 
@@ -600,7 +601,7 @@ async fn run_record_batch_import<T, E, J, ExtractErr>(
     job.progress_percentage = 10;
     job.message = format!("Extracted {} {}, ingesting...", total, cfg.progress_label);
     set_step(&mut job, IngestionStep::GettingAIRecommendation);
-    let _ = tracker.save(&job).await;
+    tracker.save_or_warn(&job).await;
 
     let batch_size = 10;
     let mut ingested = 0usize;
@@ -705,7 +706,7 @@ async fn run_record_batch_import<T, E, J, ExtractErr>(
         }
     };
     mark_terminal(&mut job);
-    let _ = tracker.save(&job).await;
+    tracker.save_or_warn(&job).await;
 }
 
 /// Parse an Apple-import request body.
@@ -1037,7 +1038,7 @@ async fn run_apple_photos_import(
             mark_failed(&mut job, format!("Failed to export photos: {}", e));
             set_step(&mut job, IngestionStep::Failed);
             mark_terminal(&mut job);
-            let _ = tracker.save(&job).await;
+            tracker.save_or_warn(&job).await;
             return;
         }
         Err(e) => {
@@ -1045,7 +1046,7 @@ async fn run_apple_photos_import(
             mark_failed(&mut job, format!("Export task panicked: {}", e));
             set_step(&mut job, IngestionStep::Failed);
             mark_terminal(&mut job);
-            let _ = tracker.save(&job).await;
+            tracker.save_or_warn(&job).await;
             return;
         }
     };
@@ -1063,7 +1064,7 @@ async fn run_apple_photos_import(
         }));
         set_step(&mut job, IngestionStep::Completed);
         mark_terminal(&mut job);
-        let _ = tracker.save(&job).await;
+        tracker.save_or_warn(&job).await;
         return;
     }
 
@@ -1073,7 +1074,7 @@ async fn run_apple_photos_import(
     job.progress_percentage = 30;
     job.message = format!("Exported {} photos, uploading...", total);
     set_step(&mut job, IngestionStep::GettingAIRecommendation);
-    let _ = tracker.save(&job).await;
+    tracker.save_or_warn(&job).await;
 
     let node = node_arc.as_ref();
     let encryption_key = node.get_encryption_key();
@@ -1207,7 +1208,7 @@ async fn run_apple_photos_import(
         job.progress_percentage = pct as u8;
         job.message = format!("Ingesting {}/{} photos...", i + 1, total);
         set_step(&mut job, IngestionStep::ExecutingMutations);
-        let _ = tracker.save(&job).await;
+        tracker.save_or_warn(&job).await;
     }
 
     let mut job = Job::new(progress_id.clone(), JobType::Other("apple-photos".into()));
@@ -1222,7 +1223,7 @@ async fn run_apple_photos_import(
     }));
     set_step(&mut job, IngestionStep::Completed);
     mark_terminal(&mut job);
-    let _ = tracker.save(&job).await;
+    tracker.save_or_warn(&job).await;
 }
 
 #[cfg(not(target_os = "macos"))]
