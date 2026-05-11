@@ -344,6 +344,28 @@ resolve_schema_service_dir() {
     return 1
 }
 
+# Defensive probe: schema_service/crates/wasm_compiler/build.rs uses env!("CARGO_MANIFEST_DIR")
+# (compile-time), which bakes an absolute path into the build-script binary. When a previous
+# build happened under a kanban worktree that's since been deleted, cargo's fingerprint sees
+# no source change and reuses the cached binary — which then panics reading the allowlist via
+# the vanished path. Detect that case and surgically clear just the wasm_compiler artifact so
+# cargo rebuilds the script with the current path. Upstream fix is a one-liner in
+# schema_service (read CARGO_MANIFEST_DIR at runtime instead).
+detect_stale_wasm_compiler_artifact() {
+    local schema_dir="$1"
+    local script_glob="$schema_dir/target/debug/build/wasm_compiler-*/build-script-build"
+    command -v strings >/dev/null 2>&1 || return 0
+    local first
+    first=$(compgen -G "$script_glob" 2>/dev/null | head -1)
+    [ -z "$first" ] && return 0
+    local baked
+    baked=$(strings "$first" 2>/dev/null | grep -m1 -oE '/Users/[^[:space:]]*/schema_service/crates/wasm_compiler' || true)
+    [ -z "$baked" ] && return 0
+    [ -d "$baked" ] && return 0
+    echo "[run.sh] wasm_compiler: cleared stale build artifact baked with vanished path: $baked"
+    ( cd "$schema_dir" && cargo clean -p wasm_compiler 2>&1 | tail -3 ) || true
+}
+
 start_local_schema_service() {
     # Schema service auto-detects its AI provider:
     #   - ANTHROPIC_API_KEY set → Anthropic (fast, accurate classification via Haiku)
@@ -402,6 +424,8 @@ start_local_schema_service() {
     home_abs="$(cd "$FOLDDB_HOME" && pwd)"
     schema_db_path="$home_abs/schema_registry"
     schema_log="$home_abs/schema_service.log"
+
+    detect_stale_wasm_compiler_artifact "$schema_service_dir"
 
     echo "Building schema_service binary from $schema_service_dir..."
     ( cd "$schema_service_dir" && cargo build -p schema_service_server_http --bin schema_service )
