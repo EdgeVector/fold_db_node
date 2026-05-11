@@ -92,6 +92,26 @@ function FileRow({ file }: FileRowProps) {
           <p className="text-xs text-secondary truncate">{file.current_step}</p>
         )
       )}
+      {file.is_complete && file.results && (() => {
+        // schemas_used is the LLM-classified schema name(s) this file landed in.
+        // Showing it on the completed row closes the "ingest -> query" loop —
+        // the user can query immediately without crawling /api/schemas.
+        const names = file.results.schemas_used?.length
+          ? file.results.schemas_used
+          : (file.results.schema_name ? [file.results.schema_name] : [])
+        if (names.length === 0) return null
+        return (
+          <p className="text-xs text-secondary truncate">
+            <span className="text-secondary">Schema: </span>
+            {names.map((n, i) => (
+              <span key={n}>
+                {i > 0 && ', '}
+                <span className="font-mono text-primary">{n}</span>
+              </span>
+            ))}
+          </p>
+        )
+      })()}
     </div>
   )
 }

@@ -386,13 +386,26 @@ const SourceCard = memo(function SourceCard({ source, enabled, onToggle, toggleD
       )}
 
       {isDone && (
-        <div className="flex items-center gap-2 mt-1">
-          <span className="text-gruvbox-green text-xs">&#10003;</span>
-          <span className="text-xs text-primary">{message}</span>
-          {result && (
-            <span className="text-xs text-secondary">
-              ({result.total} total, {result.ingested} ingested)
-            </span>
+        <div className="mt-1 space-y-0.5">
+          <div className="flex items-center gap-2">
+            <span className="text-gruvbox-green text-xs">&#10003;</span>
+            <span className="text-xs text-primary">{message}</span>
+            {result && (
+              <span className="text-xs text-secondary">
+                ({result.total} total, {result.ingested} ingested)
+              </span>
+            )}
+          </div>
+          {result?.schemas_used && result.schemas_used.length > 0 && (
+            <p className="text-xs text-secondary pl-4">
+              Schema:{' '}
+              {result.schemas_used.map((name, i) => (
+                <span key={name}>
+                  {i > 0 && ', '}
+                  <span className="font-mono text-primary">{name}</span>
+                </span>
+              ))}
+            </p>
           )}
         </div>
       )}

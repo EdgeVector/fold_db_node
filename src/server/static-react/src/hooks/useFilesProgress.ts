@@ -15,6 +15,10 @@ export interface FileProgress {
     new_schema_created?: boolean
     mutations_generated?: number
     mutations_executed?: number
+    /** Distinct schema names the file's ingestion wrote into. Surfaced in the
+     *  per-file row so the user can query immediately without crawling
+     *  /api/schemas to find the LLM-chosen name. */
+    schemas_used?: string[]
   }
 }
 

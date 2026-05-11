@@ -25,6 +25,13 @@ export interface ImportResult {
   source?: string;
   total?: number;
   ingested?: number;
+  /**
+   * Distinct user-facing schema names this import wrote records into. Echoed
+   * back from the backend so the user can immediately query the data without
+   * crawling /api/schemas to guess the (forced canonical or LLM-chosen) name
+   * — e.g. Apple Photos lands under "Photography", not "Apple Photos".
+   */
+  schemas_used?: string[];
 }
 
 export type AppleJobStatus = "idle" | "running" | "done" | "error";

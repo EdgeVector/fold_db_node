@@ -602,6 +602,7 @@ impl LlmQueryService {
                                 mutations_generated: total,
                                 mutations_executed: succeeded,
                                 schemas_written: vec![],
+                                schemas_used: vec![],
                             },
                         )
                         .await;
