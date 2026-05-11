@@ -21,6 +21,8 @@ set -e
 #   --port <port>    HTTP server port (default: auto-slot in 9101..=9199,
 #                    or value of FOLDDB_PORT env var)
 #   --schema-port <port>  Schema service port (default: <http_port> + 1)
+#   --list-slots     Print ~/.folddb-slots/ status (PID alive, port bound,
+#                    home dir) and exit without starting anything.
 #
 # Environment Variables:
 #   FOLDDB_HOME      Where all instance-specific state lives (default: .folddb)
@@ -110,14 +112,88 @@ folddb_server_pid_for_port() {
     return 0
 }
 
+# Print one row per slot file in ~/.folddb-slots/ summarising whether the
+# wrapper PID is alive, whether anything is listening on the port, and the
+# slot's home directory. Read-only diagnostic — does NOT reap or touch any
+# state. Exits 0 when there are no slots to print. Used by `--list-slots`.
+list_slots() {
+    local slot_dir="$HOME/.folddb-slots"
+    if [ ! -d "$slot_dir" ]; then
+        echo "(no slot directory at $slot_dir)"
+        return 0
+    fi
+    local any=false
+    local printed_header=false
+    for slot_file in "$slot_dir"/*.json; do
+        [ -e "$slot_file" ] || continue
+        if [ "$printed_header" = false ]; then
+            printf '%-6s %-7s %-7s %-7s %-7s %s\n' \
+                "PORT" "PID" "ALIVE" "WRAPPER" "LISTEN" "HOME"
+            printed_header=true
+        fi
+        any=true
+        local owner_pid slot_home slot_port
+        owner_pid="$(grep -oE '"pid":[[:space:]]*[0-9]+' "$slot_file" 2>/dev/null | grep -oE '[0-9]+$' || true)"
+        slot_home="$(grep -oE '"home":[[:space:]]*"[^"]*"' "$slot_file" 2>/dev/null | sed -E 's/.*"home":[[:space:]]*"([^"]*)".*/\1/' || true)"
+        slot_port="$(grep -oE '"port":[[:space:]]*[0-9]+' "$slot_file" 2>/dev/null | grep -oE '[0-9]+$' || true)"
+        local alive=no wrapper=no listen=no
+        if [ -n "$owner_pid" ] && kill -0 "$owner_pid" 2>/dev/null; then
+            alive=yes
+            if ps -p "$owner_pid" -o command= 2>/dev/null | grep -qE 'run\.sh|folddb_server'; then
+                wrapper=yes
+            fi
+        fi
+        if [ -n "$slot_port" ] && lsof -iTCP:"$slot_port" -sTCP:LISTEN -t >/dev/null 2>&1; then
+            listen=yes
+        fi
+        printf '%-6s %-7s %-7s %-7s %-7s %s\n' \
+            "${slot_port:-?}" "${owner_pid:-?}" "$alive" "$wrapper" "$listen" "${slot_home:-?}"
+    done
+    [ "$any" = false ] && echo "(no slot files in $slot_dir)"
+    return 0
+}
+
+# Slot startup grace window in seconds. Between slot-file creation and the
+# folddb_server actually binding the port, there's a build+boot window
+# (cargo build can be 30-60s, plus SERVER_TIMEOUT=60). During that window
+# the listener is legitimately unbound, so the listener-liveness reaper
+# below MUST NOT touch slots younger than this. 180s leaves margin for a
+# cold cargo build on a slow machine.
+SLOT_STARTUP_GRACE_SECONDS=180
+
+# Echo the age (in seconds) of $1 based on mtime, or 0 on failure. Handles
+# both BSD `stat -f` (macOS) and GNU `stat -c` (Linux) flavors.
+slot_file_age_seconds() {
+    local f="$1" mtime
+    mtime="$(stat -f %m "$f" 2>/dev/null || stat -c %Y "$f" 2>/dev/null || echo 0)"
+    [ "$mtime" -gt 0 ] || { echo 0; return 0; }
+    echo $(( $(date +%s) - mtime ))
+}
+
+# Echo "true" if anything is listening on TCP $1, otherwise "false". Same
+# lsof idiom used elsewhere in the script — handles IPv4 + IPv6 listeners.
+port_is_bound() {
+    local port="$1"
+    [ -n "$port" ] || { echo false; return 0; }
+    if lsof -iTCP:"$port" -sTCP:LISTEN -t >/dev/null 2>&1; then
+        echo true
+    else
+        echo false
+    fi
+}
+
 # Reap slot files in ~/.folddb-slots/ that no longer correspond to an active
-# session. A slot is stale when EITHER the owning run.sh PID is dead OR the
-# slot's home directory has been deleted (worktree GC'd while the server kept
-# running — child was nohup'd). For each stale slot kill any lingering server
-# children we can identify, then remove the slot file. Runs at startup so
-# successive invocations clean up after predecessors that were SIGKILL'd, whose
-# parent agent crashed before the EXIT trap could fire, or whose worktree was
-# rm -rf'd before the server was.
+# session. A slot is stale when ANY of:
+#   - The owning run.sh PID is dead (or PID was reused by something else),
+#   - The slot's home directory has been deleted (worktree GC'd while the
+#     server kept running — child was nohup'd),
+#   - The wrapper is alive but the listener it spawned has died and the slot
+#     is past its startup grace (zombie-wrapper case).
+# For each stale slot kill any lingering server children we can identify
+# (and the zombie wrapper, if any), then remove the slot file. Runs at
+# startup so successive invocations clean up after predecessors that were
+# SIGKILL'd, whose parent agent crashed before the EXIT trap could fire, or
+# whose folddb_server panicked underneath a still-running wrapper.
 sweep_dead_slots() {
     local slot_dir="$HOME/.folddb-slots"
     [ -d "$slot_dir" ] || return 0
@@ -145,9 +221,30 @@ sweep_dead_slots() {
             home_present=true
         fi
 
-        # Active session: owner run.sh alive AND home dir still there.
+        # Listener-liveness check. The slot's `pid` is the run.sh wrapper,
+        # not the folddb_server; the wrapper can stay alive long after its
+        # forked server has crashed (e.g. cargo panic at boot, OOM kill),
+        # leaving the slot file claiming a port that's actually free. Reap
+        # those — but only after the startup grace window, otherwise we'd
+        # race a sibling run.sh that's still cargo-building.
+        local listener_bound slot_age
+        listener_bound="$(port_is_bound "$slot_port")"
+        slot_age="$(slot_file_age_seconds "$slot_file")"
+
+        # Active session: owner run.sh alive AND home dir still there AND
+        # either the listener is bound or the slot is still inside its
+        # startup grace window.
         if [ "$owner_alive" = true ] && [ "$home_present" = true ]; then
-            continue
+            if [ "$listener_bound" = true ] || [ "$slot_age" -lt "$SLOT_STARTUP_GRACE_SECONDS" ]; then
+                continue
+            fi
+            # Zombie wrapper: alive but its folddb_server died and we're
+            # past startup grace. Kill the wrapper so it stops holding the
+            # slot, then fall through to the reap path below.
+            echo "Reaping zombie wrapper (port=$slot_port pid=$owner_pid alive but listener dead for ${slot_age}s)"
+            kill "$owner_pid" 2>/dev/null || true
+            sleep 1
+            kill -9 "$owner_pid" 2>/dev/null || true
         fi
         # Inconclusive: owner alive but home parse failed (no slot_home in
         # JSON). Treat as active to avoid killing a session we can't classify.
@@ -225,6 +322,18 @@ sweep_orphan_servers() {
     fi
     return 0
 }
+
+# Status-only command: `--list-slots` prints the current ~/.folddb-slots
+# state and exits without mutating anything. Detected here (before sweep_dead_slots,
+# before installing the EXIT trap, before reading any FOLDDB_HOME state) so the
+# diagnostic reflects ground truth at invocation time. Useful when figuring
+# out why a port appears stuck.
+for _arg in "$@"; do
+    if [ "$_arg" = "--list-slots" ]; then
+        list_slots
+        exit 0
+    fi
+done
 
 # Cleanup handler for script exit
 on_exit() {
@@ -678,7 +787,7 @@ for arg in "$@"; do
             SCHEMA_PORT="${arg#*=}"
             ;;
         --help|-h)
-            head -38 "$0" | tail -33
+            head -42 "$0" | tail -37
             exit 0
             ;;
         *)
