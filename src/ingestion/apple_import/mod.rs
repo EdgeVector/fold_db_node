@@ -404,37 +404,6 @@ pub(crate) fn parse_records<T>(
     Ok(out)
 }
 
-/// Wallclock budget for the HTTP pre-flight probe path. Tighter than
-/// [`TCC_PROBE_TIMEOUT`] because the onboarding wizard fires all five
-/// probes in parallel from a single browser request — the user's
-/// perceived latency is `max(per_probe)`, so we want it short enough
-/// that "Checking permissions..." doesn't itself feel like the hang
-/// we're trying to eliminate.
-#[cfg(target_os = "macos")]
-const HTTP_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
-
-/// Lightweight permission probe used by the HTTP pre-flight endpoint.
-///
-/// Runs the same fast TCC probe as [`preflight_permission`] but collapses
-/// every outcome into a `bool` — `true` when the probe succeeds, `false`
-/// when osascript errors or times out. Apps without a registered probe
-/// also return `true`: the assumption is the caller will fall through
-/// and surface any later osascript failure in the import job's progress
-/// stream. Caller-facing semantics: "we have no reason to block the
-/// user from clicking Import yet."
-///
-/// Unlike `preflight_permission`, this does NOT format an error message,
-/// which is the right shape for a pre-flight that needs to render a
-/// per-source `{contacts: bool, notes: bool, ...}` object without
-/// stringly-typed shoehorning.
-#[cfg(target_os = "macos")]
-pub fn probe_permission(app_label: &str) -> bool {
-    let Some(script) = tcc_probe_script(app_label) else {
-        return true;
-    };
-    run_osascript_with_timeout(script, app_label, HTTP_PROBE_TIMEOUT).is_ok()
-}
-
 /// Pre-launch the target macOS app via Launch Services so the subsequent
 /// `tell application "X"` block doesn't fail with `-600 Application
 /// isn't running`. `app_label` is a filename-style label like
@@ -574,16 +543,6 @@ mod tests {
                 }
             }
         }
-    }
-
-    #[test]
-    fn probe_permission_returns_true_for_unregistered_app() {
-        // The HTTP pre-flight endpoint feeds the result of probe_permission
-        // straight into the per-source bool returned to the wizard. An
-        // unregistered app must NOT be reported as missing permission —
-        // that would surface a false-positive "Grant Access" banner the
-        // user can do nothing about.
-        assert!(probe_permission("UnregisteredApp.app"));
     }
 
     #[test]

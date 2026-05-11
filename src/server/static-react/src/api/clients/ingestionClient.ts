@@ -706,34 +706,6 @@ export class UnifiedIngestionClient {
     );
   }
 
-  /**
-   * Pre-flight TCC permission probes for the five Apple sources used in
-   * onboarding. Each bool is `true` when the calling process can talk to
-   * that app via AppleScript. The wizard uses this to render an
-   * actionable "Grant Apple permissions" banner BEFORE importing —
-   * otherwise the user waits ~30s while osascript times out per source.
-   * On non-macOS the backend returns all five as `true`, which lets the
-   * wizard fall through to the existing "macOS only" panel without an
-   * extra false-positive banner.
-   */
-  async getAppleImportPermissions(): Promise<
-    EnhancedApiResponse<{
-      contacts: boolean
-      notes: boolean
-      calendar: boolean
-      reminders: boolean
-      photos: boolean
-    }>
-  > {
-    return this.client.get<{
-      contacts: boolean
-      notes: boolean
-      calendar: boolean
-      reminders: boolean
-      photos: boolean
-    }>(`/ingestion/apple-import/permissions`, { cacheable: false });
-  }
-
   /** Import notes from Apple Notes */
   async appleImportNotes(
     folder?: string,

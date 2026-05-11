@@ -16,6 +16,21 @@ const SOURCES: AppleSource[] = [
   { id: 'contacts', label: 'Apple Contacts', icon: '👤', description: 'Import contacts from Apple Contacts' },
 ]
 
+// Deep-link to the macOS Privacy & Security → Automation pane. Tauri's
+// shell.open is permitted for `x-apple.systempreferences:` schemes, and a
+// regular browser will prompt the user to launch System Settings on macOS.
+// Anywhere else it's a harmless no-op (browser shrugs).
+const AUTOMATION_SETTINGS_URL =
+  'x-apple.systempreferences:com.apple.preference.security?Privacy_Automation'
+
+const openAutomationSettings = () => {
+  // Per-source extract paths emit "Grant access in System Settings →
+  // Privacy & Security → Automation" inside their error messages when the
+  // TCC probe fails. Surfacing this button next to the failure list saves
+  // the user from copy-pasting the path out of the error text.
+  window.open(AUTOMATION_SETTINGS_URL, '_blank')
+}
+
 interface SourceToggleProps {
   source: AppleSource
   enabled: boolean
@@ -43,6 +58,7 @@ function SourceToggle({ source, enabled, onToggle }: SourceToggleProps) {
 interface ImportProgressProps {
   sourceId: string
   progressId: string
+  onFailedChange: (sourceId: string, failed: boolean) => void
 }
 
 interface AppleImportPayload {
@@ -51,7 +67,7 @@ interface AppleImportPayload {
   ingested?: number
 }
 
-function ImportProgress({ sourceId, progressId }: ImportProgressProps) {
+function ImportProgress({ sourceId, progressId, onFailedChange }: ImportProgressProps) {
   const [progress, setProgress] = useState(0)
   const [message, setMessage] = useState('Starting...')
   const [done, setDone] = useState(false)
@@ -82,6 +98,7 @@ function ImportProgress({ sourceId, progressId }: ImportProgressProps) {
             if (pollRef.current) clearInterval(pollRef.current)
           } else if (job.is_failed) {
             setFailed(true)
+            onFailedChange(sourceId, true)
             setMessage(job.error_message || job.message || 'Import failed')
             if (pollRef.current) clearInterval(pollRef.current)
           }
@@ -94,7 +111,7 @@ function ImportProgress({ sourceId, progressId }: ImportProgressProps) {
     pollRef.current = setInterval(poll, 2000)
     poll()
     return () => { if (pollRef.current) clearInterval(pollRef.current) }
-  }, [progressId])
+  }, [progressId, sourceId, onFailedChange])
 
   const source = SOURCES.find(s => s.id === sourceId)
   const importedCount = results?.ingested
@@ -133,14 +150,6 @@ interface AppleDataStepProps {
 }
 
 type SourceEnabledMap = Record<string, boolean>
-type SourcePermissionMap = Record<string, boolean>
-
-// Deep-link to the macOS Privacy & Security → Automation pane. Tauri's
-// shell.open is permitted for `x-apple.systempreferences:` schemes, and a
-// regular browser will prompt the user to launch System Settings on macOS.
-// Anywhere else it's a harmless no-op (browser shrugs).
-const AUTOMATION_SETTINGS_URL =
-  'x-apple.systempreferences:com.apple.preference.security?Privacy_Automation'
 
 export default function AppleDataStep({ onNext, onSkip }: AppleDataStepProps) {
   const [available, setAvailable] = useState<boolean | null>(null)
@@ -148,98 +157,35 @@ export default function AppleDataStep({ onNext, onSkip }: AppleDataStepProps) {
   const [importing, setImporting] = useState(false)
   const [progressIds, setProgressIds] = useState<Record<string, string>>({})
   const [failedSources, setFailedSources] = useState<Record<string, string>>({})
+  const [jobFailedSources, setJobFailedSources] = useState<Record<string, boolean>>({})
   const [allDone, setAllDone] = useState(false)
   const [photosLimit] = useState(50)
-  const [permissions, setPermissions] = useState<SourcePermissionMap | null>(null)
-  const [permissionsChecking, setPermissionsChecking] = useState(false)
-
-  // After the wizard knows it's on macOS, run the per-source TCC pre-flight
-  // so we can warn before the user clicks Import — otherwise contacts (and
-  // any other source missing Automation) would wedge the import for ~30s
-  // before surfacing the same "Grant access" message we surface up front.
-  // `permissions === null` (probe failed entirely) intentionally falls
-  // through to the legacy "click and find out" path; that's safer than
-  // gating the user out of imports because a probe call dropped.
-  const refreshPermissions = useCallback(async () => {
-    setPermissionsChecking(true)
-    try {
-      const resp = await ingestionClient.getAppleImportPermissions()
-      if (resp.success && resp.data) {
-        setPermissions(resp.data as SourcePermissionMap)
-      } else {
-        setPermissions(null)
-      }
-    } catch {
-      setPermissions(null)
-    } finally {
-      setPermissionsChecking(false)
-    }
-  }, [])
 
   useEffect(() => {
     let cancelled = false
     ingestionClient.getAppleImportStatus()
-      .then(async resp => {
+      .then(resp => {
         if (cancelled) return
-        const isAvail = !!(resp.success && resp.data?.available)
-        setAvailable(isAvail)
-        if (isAvail) {
-          await refreshPermissions()
-        }
+        setAvailable(!!(resp.success && resp.data?.available))
       })
       .catch(() => {
         if (!cancelled) setAvailable(false)
       })
     return () => { cancelled = true }
-  }, [refreshPermissions])
+  }, [])
 
   const handleToggle = useCallback((id: string, checked: boolean) => {
     setEnabled(prev => ({ ...prev, [id]: checked }))
   }, [])
 
-  // Selected sources whose probe came back `false`. Used both to render the
-  // pre-import banner and to short-circuit a click on Import Selected
-  // (re-checking once before deciding — the user may have granted access
-  // since mount).
-  const missingSelectedPermissions = useCallback(
-    (perms: SourcePermissionMap | null): string[] => {
-      if (!perms) return []
-      return Object.entries(enabled)
-        .filter(([id, on]) => on && perms[id] === false)
-        .map(([id]) => id)
-    },
-    [enabled],
-  )
-
-  const handleOpenSettings = useCallback(() => {
-    // window.open is harmless on non-macOS browsers; on macOS the OS
-    // intercepts the x-apple.systempreferences scheme. We deliberately do
-    // NOT block on this returning — there's no callback signal the user
-    // actually granted access; they have to click Retry / Refresh.
-    window.open(AUTOMATION_SETTINGS_URL, '_blank')
+  const handleJobFailedChange = useCallback((sourceId: string, failed: boolean) => {
+    setJobFailedSources(prev => (prev[sourceId] === failed ? prev : { ...prev, [sourceId]: failed }))
   }, [])
 
   const handleImportAll = async () => {
-    // Re-probe just before kicking off; the user may have granted access
-    // between mount and clicking Import. If anything's still missing,
-    // surface the inline error and bail before spawning any background
-    // jobs — that's the whole point of the pre-flight.
-    const fresh = await ingestionClient
-      .getAppleImportPermissions()
-      .then(r => (r.success && r.data ? (r.data as SourcePermissionMap) : null))
-      .catch(() => null)
-    if (fresh) setPermissions(fresh)
-
-    const blockers = missingSelectedPermissions(fresh ?? permissions)
-    if (blockers.length > 0) {
-      // Render the banner the user already saw (or now sees) and bail.
-      // We do NOT mark `importing=true` because there's nothing in
-      // progress to monitor.
-      return
-    }
-
     setImporting(true)
     setFailedSources({})
+    setJobFailedSources({})
     const ids: Record<string, string> = {}
     const failures: Record<string, string> = {}
     const selected = Object.entries(enabled).filter(([, v]) => v).map(([k]) => k)
@@ -277,6 +223,7 @@ export default function AppleDataStep({ onNext, onSkip }: AppleDataStepProps) {
 
   const handleRetry = () => {
     setFailedSources({})
+    setJobFailedSources({})
     setProgressIds({})
     setAllDone(false)
     handleImportAll()
@@ -307,6 +254,7 @@ export default function AppleDataStep({ onNext, onSkip }: AppleDataStepProps) {
   }, [importing, progressIds])
 
   const anyEnabled = Object.values(enabled).some(v => v)
+  const anyJobFailed = Object.values(jobFailedSources).some(v => v)
 
   if (available === null) {
     return <p className="text-secondary text-center py-6">Checking Apple data availability...</p>
@@ -339,7 +287,9 @@ export default function AppleDataStep({ onNext, onSkip }: AppleDataStepProps) {
       </h2>
       <p className="text-primary mb-1">Import data from your macOS apps into FoldDB.</p>
       <p className="text-xs text-secondary mb-4">
-        All data stays on your device. You may be prompted for permission on first use.
+        All data stays on your device. You may be prompted for permission on first use — if an
+        import reports "Grant access in System Settings → Privacy & Security → Automation",
+        use the button below to jump straight there.
       </p>
 
       {!importing ? (
@@ -355,48 +305,6 @@ export default function AppleDataStep({ onNext, onSkip }: AppleDataStepProps) {
             ))}
           </div>
 
-          {(() => {
-            const blockers = missingSelectedPermissions(permissions)
-            if (blockers.length === 0) return null
-            const blockerLabels = blockers
-              .map(id => SOURCES.find(s => s.id === id)?.label ?? id)
-              .join(', ')
-            return (
-              <div
-                role="alert"
-                data-testid="apple-permissions-banner"
-                className="card p-4 mt-3 border border-gruvbox-yellow"
-              >
-                <div className="text-sm text-gruvbox-yellow font-medium mb-1">
-                  Grant Apple permissions before importing
-                </div>
-                <p className="text-xs text-primary mb-2">
-                  These selected sources can't be reached yet: {blockerLabels}.
-                  Grant access in System Settings → Privacy &amp; Security →
-                  Automation (and Full Disk Access for Photos), then refresh.
-                </p>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={handleOpenSettings}
-                    className="btn-primary text-xs px-3 py-1"
-                  >
-                    Open System Settings
-                  </button>
-                  <button
-                    type="button"
-                    onClick={refreshPermissions}
-                    disabled={permissionsChecking}
-                    data-testid="apple-permissions-refresh"
-                    className="btn-secondary text-xs px-3 py-1"
-                  >
-                    {permissionsChecking ? 'Checking...' : 'Refresh'}
-                  </button>
-                </div>
-              </div>
-            )
-          })()}
-
           <div className="flex gap-2 mt-4">
             <button
               onClick={handleImportAll}
@@ -409,13 +317,28 @@ export default function AppleDataStep({ onNext, onSkip }: AppleDataStepProps) {
               Skip
             </button>
           </div>
+          <div className="mt-3 text-center">
+            <button
+              type="button"
+              onClick={openAutomationSettings}
+              data-testid="apple-permissions-deeplink"
+              className="text-xs text-secondary bg-transparent border-none cursor-pointer hover:underline"
+            >
+              Open System Settings → Privacy &amp; Security → Automation
+            </button>
+          </div>
         </>
       ) : (
         <>
           {Object.keys(progressIds).length > 0 && (
             <div className="card p-4 space-y-1">
               {Object.entries(progressIds).map(([sourceId, pid]) => (
-                <ImportProgress key={sourceId} sourceId={sourceId} progressId={pid} />
+                <ImportProgress
+                  key={sourceId}
+                  sourceId={sourceId}
+                  progressId={pid}
+                  onFailedChange={handleJobFailedChange}
+                />
               ))}
             </div>
           )}
@@ -445,6 +368,19 @@ export default function AppleDataStep({ onNext, onSkip }: AppleDataStepProps) {
                   )
                 })}
               </ul>
+            </div>
+          )}
+
+          {(Object.keys(failedSources).length > 0 || anyJobFailed) && (
+            <div className="mt-3 text-center">
+              <button
+                type="button"
+                onClick={openAutomationSettings}
+                data-testid="apple-permissions-deeplink"
+                className="btn-secondary text-xs px-3 py-1"
+              >
+                Open System Settings → Privacy &amp; Security → Automation
+              </button>
             </div>
           )}
 
