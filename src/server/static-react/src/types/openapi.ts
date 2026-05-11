@@ -1740,6 +1740,8 @@ export interface operations {
                 since?: number | null;
                 /** @description Cap result count (default 1000) */
                 limit?: number | null;
+                /** @description Minimum severity (TRACE/DEBUG/INFO/WARN/ERROR, case-insensitive); returns entries at or above this level */
+                level?: string | null;
             };
             header?: never;
             path?: never;
