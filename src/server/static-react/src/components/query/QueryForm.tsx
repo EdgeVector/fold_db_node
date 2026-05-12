@@ -87,6 +87,7 @@ function QueryForm({
           value={queryState?.selectedSchema || ''}
           onChange={handleSchemaChange}
           options={buildSchemaOptions(approvedSchemas, orgNames)}
+          config={{ loading: schemasLoading }}
         />
       </FieldWrapper>
 
