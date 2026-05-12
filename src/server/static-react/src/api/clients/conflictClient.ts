@@ -13,11 +13,11 @@ export interface ConflictSummary {
   detected_at: string;
 }
 
-export interface ConflictsResponse {
+interface ConflictsResponse {
   conflicts: ConflictSummary[];
 }
 
-export interface ResolveConflictResponse {
+interface ResolveConflictResponse {
   resolved: string;
 }
 
