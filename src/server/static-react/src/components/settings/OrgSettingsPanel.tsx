@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, type FormEvent } from 'react'
 import { defaultApiClient } from '../../api/core/client'
 import { systemClient } from '../../api/clients/systemClient'
 import { orgClient, type OrgInviteBundle, type OrgMemberInfo, type CloudMember } from '../../api/clients/orgClient'
+import { BROWSER_CONFIG } from '../../constants/config'
 
 interface Org {
   org_hash: string
@@ -52,7 +53,7 @@ export default function OrgSettingsPanel() {
 
   useEffect(() => {
     const doFetch = () => {
-      const hash = localStorage.getItem('fold_user_hash')
+      const hash = localStorage.getItem(BROWSER_CONFIG.STORAGE_KEYS.USER_HASH)
       if (!hash) {
         const timer = setTimeout(doFetch, 1000)
         return () => clearTimeout(timer)

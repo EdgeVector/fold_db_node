@@ -137,7 +137,7 @@ function Header({ onSettingsClick, onAiSettingsClick, onCloudSettingsClick }: He
     let cancelled = false
     const checkOrgSync = async () => {
       try {
-        const hash = localStorage.getItem('fold_user_hash')
+        const hash = localStorage.getItem(BROWSER_CONFIG.STORAGE_KEYS.USER_HASH)
         if (!hash) return
         const res = await defaultApiClient.get('/org')
         const data = ((res as { data?: unknown }).data ?? res) as { orgs?: Array<{ org_hash: string }> }

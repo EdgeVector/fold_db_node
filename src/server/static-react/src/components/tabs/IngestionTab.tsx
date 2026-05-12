@@ -4,6 +4,7 @@ import { ingestionClient } from '../../api/clients'
 import { defaultApiClient } from '../../api/core/client'
 import { generateBlogPosts } from '../../data/sampleBlogPosts'
 import { twitterSamples, instagramSamples, linkedinSamples, tiktokSamples } from '../../data/sampleSocialPosts'
+import { BROWSER_CONFIG } from '../../constants/config'
 
 const SAMPLES_ENABLED = import.meta.env.VITE_ENABLE_SAMPLES === 'true'
 
@@ -31,7 +32,7 @@ function IngestionTab({ onResult }: IngestionTabProps) {
     const maxRetries = 5
     const fetchOrgs = () => {
       if (cancelled) return
-      const hash = localStorage.getItem('fold_user_hash')
+      const hash = localStorage.getItem(BROWSER_CONFIG.STORAGE_KEYS.USER_HASH)
       if (!hash) {
         retries++
         if (retries < maxRetries) setTimeout(fetchOrgs, 1000)
