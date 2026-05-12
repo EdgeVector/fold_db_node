@@ -67,7 +67,7 @@ export default function ConnectionRequestsPanel({ onResult }: ConnectionRequests
         onResult({ error: res.error || `Failed to ${action}` })
       }
     } catch (e) {
-      onResult({ error: toErrorMessage(e) || 'Network error' })
+      onResult({ error: toErrorMessage(e) || 'Failed to respond' })
     } finally {
       setResponding(null)
     }

@@ -13,6 +13,7 @@ import {
 } from '../../../api/clients/sharingClient'
 import { listContacts, type Contact } from '../../../api/clients/trustClient'
 import { getAllSchemasWithState } from '../../../api/clients/schemaClient'
+import { toErrorMessage } from '../../../utils/schemaUtils'
 
 type ScopeKind = 'AllSchemas' | 'Schema' | 'SchemaField'
 
@@ -81,7 +82,7 @@ export default function CrossUserSharingPanel() {
         setRulesError(res.error ?? 'Failed to load share rules')
       }
     } catch (e) {
-      setRulesError((e as Error)?.message ?? 'Network error')
+      setRulesError(toErrorMessage(e) || 'Failed to load share rules')
     } finally {
       setRulesLoading(false)
     }
@@ -98,7 +99,7 @@ export default function CrossUserSharingPanel() {
         setPendingError(res.error ?? 'Failed to load pending invites')
       }
     } catch (e) {
-      setPendingError((e as Error)?.message ?? 'Network error')
+      setPendingError(toErrorMessage(e) || 'Failed to load pending invites')
     } finally {
       setPendingLoading(false)
     }
@@ -181,7 +182,7 @@ export default function CrossUserSharingPanel() {
               setToast(res.error ?? 'Failed to generate invite')
             }
           } catch (e) {
-            setToast((e as Error)?.message ?? 'Network error')
+            setToast(toErrorMessage(e) || 'Failed to generate invite')
           }
         }}
         onDeactivate={async (rule: ShareRule) => {
@@ -197,7 +198,7 @@ export default function CrossUserSharingPanel() {
               setToast(res.error ?? 'Failed to deactivate')
             }
           } catch (e) {
-            setToast((e as Error)?.message ?? 'Network error')
+            setToast(toErrorMessage(e) || 'Failed to deactivate')
           }
         }}
       />
@@ -219,7 +220,7 @@ export default function CrossUserSharingPanel() {
               setToast(res.error ?? 'Failed to accept invite')
             }
           } catch (e) {
-            setToast((e as Error)?.message ?? 'Network error')
+            setToast(toErrorMessage(e) || 'Failed to accept invite')
           }
         }}
       />
@@ -289,7 +290,7 @@ function CreateRuleForm({ contacts, schemas, onCreated }: CreateRuleFormProps) {
         setError(res.error ?? 'Failed to create share rule')
       }
     } catch (err) {
-      setError((err as Error)?.message ?? 'Network error')
+      setError(toErrorMessage(err) || 'Failed to create share rule')
     } finally {
       setSubmitting(false)
     }

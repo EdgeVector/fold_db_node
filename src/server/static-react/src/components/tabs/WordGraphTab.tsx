@@ -154,7 +154,7 @@ export default function WordGraphTab() {
         setError(res.error || 'Search failed')
       }
     } catch (e) {
-      setError(toErrorMessage(e) || 'Network error')
+      setError(toErrorMessage(e) || 'Search failed')
     } finally {
       setIsSearching(false)
     }

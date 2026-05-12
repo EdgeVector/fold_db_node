@@ -36,7 +36,7 @@ export default function SharedEventsPanel({ onResult }: SharedEventsPanelProps) 
         setError(statusRes.error || 'Failed to load calendar sharing status')
       }
     } catch (e) {
-      setError(toErrorMessage(e) || 'Network error')
+      setError(toErrorMessage(e) || 'Failed to load calendar sharing status')
     } finally {
       setLoading(false)
     }
@@ -65,7 +65,7 @@ export default function SharedEventsPanel({ onResult }: SharedEventsPanelProps) 
         onResult({ error: res.error || 'Failed to toggle calendar sharing' })
       }
     } catch (e) {
-      onResult({ error: toErrorMessage(e) || 'Network error' })
+      onResult({ error: toErrorMessage(e) || 'Failed to toggle calendar sharing' })
     } finally {
       setToggling(false)
     }

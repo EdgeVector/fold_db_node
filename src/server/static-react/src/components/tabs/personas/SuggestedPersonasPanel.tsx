@@ -5,6 +5,7 @@ import {
   RELATIONSHIP_OPTIONS,
   type SuggestedPersonaView,
 } from '../../../api/clients/fingerprintsClient'
+import { toErrorMessage } from '../../../utils/schemaUtils'
 
 /**
  * localStorage key used to persist the set of dismissed suggestion
@@ -78,7 +79,7 @@ export default function SuggestedPersonasPanel() {
         setError(res.error ?? 'Failed to load suggestions')
       }
     } catch (e) {
-      setError((e as Error)?.message ?? 'Network error')
+      setError(toErrorMessage(e) || 'Failed to load suggestions')
     } finally {
       setLoading(false)
     }

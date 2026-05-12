@@ -68,9 +68,19 @@ export class ApiError extends Error {
     if (this.isNetworkError) {
       return ERROR_MESSAGES.NETWORK_ERROR;
     }
-    
+
     if (this.isTimeoutError) {
       return ERROR_MESSAGES.TIMEOUT_ERROR;
+    }
+
+    // Prefer the server-supplied descriptive message over the generic constant
+    // for HTTP errors. ErrorFactory.fromResponse fills `this.message` with
+    // `errorData.message` / `errorData.error` (e.g. structured 400 payloads
+    // like "Field 'title' not on schema 'X'", or a 404 body's "schema not
+    // found") — that text is what the user can actually act on. The synthetic
+    // `HTTP <status>` fallback is filtered out so we don't surface "HTTP 404".
+    if (this.message && this.status > 0 && !/^HTTP \d+$/.test(this.message)) {
+      return this.message;
     }
 
     switch (this.status) {

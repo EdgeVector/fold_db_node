@@ -154,9 +154,9 @@ export default function NativeIndexTab({ onResult }: NativeIndexTabProps) {
         onResult({ error: res.error || 'Search failed', status: res.status })
       }
     } catch (e) {
-      const msg = toErrorMessage(e)
-      setError(msg || 'Network error')
-      onResult({ error: msg || 'Network error' })
+      const msg = toErrorMessage(e) || 'Search failed'
+      setError(msg)
+      onResult({ error: msg })
     } finally {
       setIsSearching(false)
     }

@@ -5,6 +5,7 @@ import {
   listReceivedCards,
   type ReceivedCardView,
 } from '../../../api/clients/fingerprintsClient'
+import { toErrorMessage } from '../../../utils/schemaUtils'
 
 type ActionFlag = 'accept' | 'dismiss' | null
 
@@ -52,7 +53,7 @@ export default function ReceivedCardsPanel() {
         setError(res.error ?? 'Failed to load received cards')
       }
     } catch (e) {
-      setError((e as Error)?.message ?? 'Network error')
+      setError(toErrorMessage(e) || 'Failed to load received cards')
     } finally {
       setLoading(false)
     }
