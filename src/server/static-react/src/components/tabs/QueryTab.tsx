@@ -6,6 +6,7 @@
 import { useCallback, useState, useEffect } from 'react';
 import type { OperationResultPayload } from '../../types/api';
 import { mutationClient } from '../../api/clients/mutationClient';
+import { ApiError } from '../../api/core/errors';
 import { useQueryState } from '../../hooks/useQueryState';
 import { useQueryBuilder } from '../../hooks/useQueryBuilder';
 import QueryForm from '../query/QueryForm';
@@ -16,6 +17,33 @@ import { useOrgNames } from '../../hooks/useOrgNames';
 
 interface QueryTabProps {
   onResult: (result: OperationResultPayload & { details?: unknown }) => void;
+}
+
+interface UnknownFieldsError {
+  message: string;
+  schemaName: string;
+  unknownFields: string[];
+  availableFields: string[];
+}
+
+// The backend returns `{ ok:false, error:'unknown_fields', message, schema_name,
+// unknown_fields, available_fields }` as a structured 400 when the request
+// names fields that don't exist on the schema. Pull the structured shape out
+// so the UI can render an actionable chip row instead of just the message.
+function extractUnknownFieldsError(error: unknown): UnknownFieldsError | null {
+  if (!(error instanceof ApiError) || error.status !== 400) return null;
+  const payload = error.response;
+  if (!payload || payload instanceof Response) return null;
+  const body = payload as Record<string, unknown>;
+  if (body.error !== 'unknown_fields') return null;
+  const onlyStrings = (v: unknown): string[] =>
+    Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
+  return {
+    message: error.message,
+    schemaName: typeof body.schema_name === 'string' ? body.schema_name : '',
+    unknownFields: onlyStrings(body.unknown_fields),
+    availableFields: onlyStrings(body.available_fields),
+  };
 }
 
 function QueryTab({ onResult }: QueryTabProps) {
@@ -58,6 +86,7 @@ function QueryTab({ onResult }: QueryTabProps) {
 
   // Execution state management
   const [isExecuting, setIsExecuting] = useState(false);
+  const [unknownFieldsError, setUnknownFieldsError] = useState<UnknownFieldsError | null>(null);
 
   // Use the extracted query builder for query construction
   const { query, isValid } = useQueryBuilder({
@@ -83,7 +112,7 @@ function QueryTab({ onResult }: QueryTabProps) {
     setIsExecuting(true);
     try {
       const response = await mutationClient.executeQuery(queryData);
-      
+
       if (!response.success) {
         console.error('Query failed:', response.error);
         onResult({
@@ -92,7 +121,8 @@ function QueryTab({ onResult }: QueryTabProps) {
         });
         return;
       }
-      
+
+      setUnknownFieldsError(null);
       // Pass the actual query data from response.data
       // API returns { ok: true, results: [...] } in data, extract results array
       const data = response.data as { results?: unknown } | undefined
@@ -102,14 +132,41 @@ function QueryTab({ onResult }: QueryTabProps) {
       });
     } catch (error) {
       console.error('Failed to execute query:', error);
-      onResult({
-        error: `Network error: ${error instanceof Error ? error.message : String(error)}`,
-        details: error
-      });
+      const ufe = extractUnknownFieldsError(error);
+      if (ufe) {
+        setUnknownFieldsError(ufe);
+        onResult({
+          error: ufe.message,
+          details: error instanceof ApiError ? error.response : error
+        });
+      } else if (error instanceof ApiError) {
+        setUnknownFieldsError(null);
+        // Distinguish HTTP errors from real network failures — the previous
+        // "Network error: ..." prefix mis-categorized every 4xx/5xx response.
+        const message = error.isNetworkError
+          ? `Network error: ${error.message}`
+          : error.toUserMessage();
+        onResult({ error: message, details: error });
+      } else {
+        setUnknownFieldsError(null);
+        onResult({
+          error: `Network error: ${error instanceof Error ? error.message : String(error)}`,
+          details: error
+        });
+      }
     } finally {
       setIsExecuting(false);
     }
   }, [onResult]);
+
+  const handleAvailableFieldClick = useCallback((fieldName: string) => {
+    handleFieldToggle(fieldName);
+  }, [handleFieldToggle]);
+
+  const handleClearWithReset = useCallback(() => {
+    setUnknownFieldsError(null);
+    clearState();
+  }, [clearState]);
 
 
   // UI does not require authentication
@@ -141,10 +198,38 @@ function QueryTab({ onResult }: QueryTabProps) {
             rangeKey={rangeKey}
           />
 
+          {unknownFieldsError && (
+            <div
+              className="p-3 bg-gruvbox-red/10 border border-gruvbox-red/20 rounded-lg"
+              data-testid="unknown-fields-error"
+              role="alert"
+            >
+              <div className="text-sm text-gruvbox-red">{unknownFieldsError.message}</div>
+              {unknownFieldsError.availableFields.length > 0 && (
+                <div className="mt-2">
+                  <div className="text-xs text-secondary mb-1">Click to add:</div>
+                  <div className="flex flex-wrap gap-2" data-testid="available-fields-chips">
+                    {unknownFieldsError.availableFields.map(field => (
+                      <button
+                        key={field}
+                        type="button"
+                        onClick={() => handleAvailableFieldClick(field)}
+                        className="px-2 py-0.5 text-xs rounded-full border border-border hover:border-gruvbox-blue hover:bg-gruvbox-blue/10 transition-colors bg-transparent text-primary cursor-pointer"
+                        data-testid={`available-field-chip-${field}`}
+                      >
+                        + {field}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Query Actions */}
           <QueryActions
             onExecute={() => handleExecuteQuery(query)}
-            onClear={clearState}
+            onClear={handleClearWithReset}
             queryData={query}
             disabled={!isValid}
             isExecuting={isExecuting}
