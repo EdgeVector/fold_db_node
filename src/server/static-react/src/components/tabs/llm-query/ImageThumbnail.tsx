@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { BROWSER_CONFIG } from '../../../constants/config'
 
 interface ImageThumbnailProps {
   fileHash: string
@@ -12,7 +13,7 @@ export default function ImageThumbnail({ fileHash, sourceFile }: ImageThumbnailP
   useEffect(() => {
     const url = `/api/file/${fileHash}?name=${encodeURIComponent(sourceFile || '')}`
     let revoked = false
-    const userHash = localStorage.getItem('fold_user_hash')
+    const userHash = localStorage.getItem(BROWSER_CONFIG.STORAGE_KEYS.USER_HASH)
     const headers: Record<string, string> = {}
     if (userHash) {
       headers['x-user-hash'] = userHash

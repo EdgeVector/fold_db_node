@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { InboxArrowDownIcon } from '@heroicons/react/24/outline'
 import { mutationClient } from '../../api/clients'
 import { SCHEMA_BADGE_COLORS } from '../../constants/ui'
+import { BROWSER_CONFIG } from '../../constants/config'
 import {
   createHashRangeKeyFilter,
   createHashKeyFilter,
@@ -241,7 +242,7 @@ export function VersionHistory({ moleculeUuid }: { moleculeUuid: string | null |
 const IMAGE_EXTENSIONS = /\.(jpe?g|png|gif|webp|svg)$/i
 
 function authHeaders(): Record<string, string> {
-  const userHash = localStorage.getItem('fold_user_hash')
+  const userHash = localStorage.getItem(BROWSER_CONFIG.STORAGE_KEYS.USER_HASH)
   if (!userHash) return {}
   return { 'x-user-hash': userHash, 'x-user-id': userHash }
 }

@@ -11,6 +11,7 @@ import { useFilesProgress } from '../../hooks/useFilesProgress'
 import FolderInput from './smart-folder/FolderInput'
 import ScanResultsView from './smart-folder/ScanResultsView'
 import BatchProgressView from './smart-folder/BatchProgressView'
+import { BROWSER_CONFIG } from '../../constants/config'
 
 const STORAGE_KEY = 'smartFolderTabState'
 
@@ -90,7 +91,7 @@ function SmartFolderTab({ onResult: onResultProp }: SmartFolderTabProps) {
     const maxRetries = 5
     const fetchOrgs = () => {
       if (cancelled) return
-      const hash = localStorage.getItem('fold_user_hash')
+      const hash = localStorage.getItem(BROWSER_CONFIG.STORAGE_KEYS.USER_HASH)
       if (!hash) {
         retries++
         if (retries < maxRetries) setTimeout(fetchOrgs, 1000)
