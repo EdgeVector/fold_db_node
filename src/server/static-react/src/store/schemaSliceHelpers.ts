@@ -17,10 +17,7 @@ import {
   SchemaOperationErrorPayload
 } from '../types/schema';
 import { EnhancedApiResponse } from '../api/core/types';
-import {
-  SCHEMA_OPERATION_REQUIREMENTS,
-  SCHEMA_ERROR_MESSAGES
-} from '../constants/redux';
+import { SCHEMA_OPERATION_REQUIREMENTS } from '../constants/redux';
 
 // ============================================================================
 // CONSTANTS
