@@ -147,7 +147,3 @@ export const CACHE_KEYS = {
   VERIFY: "verify",
   PARAMETERIZED_QUERY: "parameterized-query",
 } as const;
-
-
-// Type definitions for better type safety
-export type SchemaState = (typeof SCHEMA_STATES)[keyof typeof SCHEMA_STATES];
