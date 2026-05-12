@@ -93,8 +93,9 @@ describe('QueryForm Component', () => {
       mockProps.schemasLoading = true;
       renderWithRedux(<QueryForm {...mockProps} />, { preloadedState: createAuthenticatedState() });
 
-      // The SelectField component should handle loading state
-      expect(screen.getByRole('combobox')).toBeInTheDocument();
+      // SelectField renders a loading indicator (no combobox) while schemasLoading is true
+      expect(screen.getByText('Loading...')).toBeInTheDocument();
+      expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
     });
 
     it('should apply custom className', () => {
