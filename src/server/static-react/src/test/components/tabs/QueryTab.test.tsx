@@ -2,6 +2,7 @@ import React from 'react'
 import { screen, fireEvent, waitFor } from '@testing-library/react'
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import QueryTab from '../../../components/tabs/QueryTab'
+import { ApiError } from '../../../api/core/errors'
 import { renderWithRedux, createTestSchemaState, createMockAuthState } from '../../utils/testUtilities'
 
 // Mock the API client
@@ -335,5 +336,85 @@ describe('QueryTab Component', () => {
     await waitFor(() => {
       expect(mockOnResult).toHaveBeenCalled()
     }, { timeout: 5000 })
+  }, 10000)
+
+  it('renders structured error block with available_fields chips on unknown_fields 400', async () => {
+    // Stable toggleField across re-renders — setUnknownFieldsError on the
+    // failure path triggers a re-render that re-invokes useQueryState, so we
+    // use `mockImplementation` (persistent) with a closed-over object.
+    const toggleFieldMock = vi.fn()
+    const queryStateValue = {
+      state: {
+        selectedSchema: 'Apple Calendar',
+        queryFields: ['title'],
+      },
+      handleSchemaChange: vi.fn(),
+      toggleField: toggleFieldMock,
+      handleFieldValueChange: vi.fn(),
+      handleRangeFilterChange: vi.fn(),
+      setRangeSchemaFilter: vi.fn(),
+      setHashKeyValue: vi.fn(),
+      clearState: vi.fn(),
+      refetchSchemas: vi.fn(),
+      approvedSchemas: [
+        { name: 'Apple Calendar', fields: { event_title: { field_type: 'String' }, start_time: { field_type: 'String' } } }
+      ],
+      schemasLoading: false,
+      selectedSchemaObj: { name: 'Apple Calendar', fields: { event_title: { field_type: 'String' }, start_time: { field_type: 'String' } } },
+      isRangeSchema: false,
+      isHashRangeSchema: false,
+      rangeKey: null,
+    }
+    const queryStateModule = await import('../../../hooks/useQueryState')
+    vi.mocked(queryStateModule.useQueryState).mockImplementation(
+      () => queryStateValue as unknown as ReturnType<typeof queryStateModule.useQueryState>
+    )
+
+    // Reject executeQuery with a structured 400 ApiError matching the backend
+    // unknown_fields shape from PR for kanban #92164. The earlier range-filter
+    // test mutates `mutationClient.executeQuery` directly (not via client.post),
+    // so we have to assign onto `executeQuery` here too to override that stub.
+    const responsePayload = {
+      ok: false,
+      error: 'unknown_fields',
+      message: "Field 'title' not on schema 'Apple Calendar'. Available: event_title, start_time",
+      schema_name: 'Apple Calendar',
+      unknown_fields: ['title'],
+      available_fields: ['event_title', 'start_time'],
+    }
+    const apiError = new ApiError(responsePayload.message, 400, { response: responsePayload })
+
+    const mutationClientModule = await import('../../../api/clients/mutationClient')
+    mutationClientModule.mutationClient.executeQuery = vi.fn().mockRejectedValue(apiError) as unknown as typeof mutationClientModule.mutationClient.executeQuery
+
+    const authState = createMockAuthState({ isAuthenticated: true })
+    const initialState = { auth: authState, ...createTestSchemaState() }
+    await renderWithRedux(<QueryTab onResult={mockOnResult} />, { preloadedState: initialState })
+
+    await waitFor(() => {
+      expect(screen.getByTestId('execute-query')).toBeInTheDocument()
+    }, { timeout: 5000 })
+
+    fireEvent.click(screen.getByTestId('execute-query'))
+
+    // Structured error block + a chip for each available_fields entry.
+    await waitFor(() => {
+      expect(screen.getByTestId('unknown-fields-error')).toBeInTheDocument()
+    }, { timeout: 5000 })
+    expect(screen.getByTestId('available-fields-chips')).toBeInTheDocument()
+    expect(screen.getByTestId('available-field-chip-event_title')).toBeInTheDocument()
+    expect(screen.getByTestId('available-field-chip-start_time')).toBeInTheDocument()
+
+    // onResult receives the backend's human-readable message (NOT a
+    // "Network error: …" prefix) and the structured payload as details.
+    expect(mockOnResult).toHaveBeenCalledWith({
+      error: responsePayload.message,
+      details: responsePayload,
+    })
+
+    // Clicking an available-field chip routes through toggleField so the
+    // field gets added to the query state.
+    fireEvent.click(screen.getByTestId('available-field-chip-event_title'))
+    expect(toggleFieldMock).toHaveBeenCalledWith('event_title')
   }, 10000)
 })
