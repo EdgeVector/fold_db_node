@@ -17,13 +17,6 @@ export interface TabDefinition {
   group: "main" | "advanced";
 }
 
-export interface SidebarItem {
-  id: string;
-  label: string;
-  icon: string;
-  group: string;
-}
-
 // Tab Definitions
 // Main tabs: core user-facing features (5 tabs max visible)
 // Advanced tabs: developer/power-user tools in "More" dropdown
@@ -57,18 +50,6 @@ export const DEFAULT_TABS: readonly TabDefinition[] = [
   { id: "remote-query", label: "Remote Query", icon: "🔗", group: "advanced" },
   // Sync
   { id: "conflicts", label: "Sync Conflicts", icon: "⚡", group: "advanced" },
-];
-
-// Sidebar Navigation Items (used by Sidebar component)
-export const SIDEBAR_ITEMS: readonly SidebarItem[] = [
-  { id: "agent", label: "Agent", icon: "\u{1F916}", group: "MAIN" },
-  { id: "data-browser", label: "Browse", icon: "\u{1F4CA}", group: "DATA" },
-  { id: "query", label: "Query", icon: "\u{1F50D}", group: "DATA" },
-  { id: "schemas", label: "Schemas", icon: "\u{1F4CB}", group: "DATA" },
-  { id: "smart-folder", label: "Import", icon: "\u{1F4E5}", group: "IMPORT" },
-  { id: "file-upload", label: "Files", icon: "\u{1F4C4}", group: "IMPORT" },
-  { id: "people", label: "People", icon: "\u{1F465}", group: "SOCIAL" },
-  { id: "discovery", label: "Discover", icon: "\u{1F310}", group: "SOCIAL" },
 ];
 
 // Button Text Constants
