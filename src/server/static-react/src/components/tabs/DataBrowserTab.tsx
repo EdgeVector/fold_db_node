@@ -15,7 +15,7 @@ import { FieldsTable } from '../StructuredResults'
 import SchemaName from '../shared/SchemaName'
 import ShareRecordModal from '../ShareRecordModal'
 import { ArrowUpTrayIcon } from '@heroicons/react/24/outline'
-import { getFieldNames, toggleSetItem } from '../../utils/schemaUtils'
+import { getFieldNames, toErrorMessage, toggleSetItem } from '../../utils/schemaUtils'
 import {
   keyId,
   keyLabel,
@@ -186,7 +186,7 @@ export default function DataBrowserTab() {
           setSchemaErrors((p) => ({ ...p, [name]: res.error || 'Failed to fetch keys' }))
         }
       } catch (e) {
-        setSchemaErrors((p) => ({ ...p, [name]: (e instanceof Error ? e.message : String(e)) || 'Network error' }))
+        setSchemaErrors((p) => ({ ...p, [name]: toErrorMessage(e) || 'Failed to fetch keys' }))
       } finally {
         setSchemaLoading((p) => ({ ...p, [name]: false }))
       }

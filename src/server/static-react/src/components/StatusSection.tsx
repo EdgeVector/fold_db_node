@@ -4,6 +4,8 @@ import { systemClient } from '../api/clients/systemClient'
 import { ingestionClient } from '../api/clients'
 import type { IngestionProgress } from '../api/clients/ingestionClient'
 import { usePolling } from '../hooks/usePolling'
+import { isNetworkError } from '../api/core/errors'
+import { toErrorMessage } from '../utils/schemaUtils'
 
 type ProgressJob = IngestionProgress & { job_type?: string }
 
@@ -76,8 +78,11 @@ function StatusSection() {
         setIsResetting(false)
       }
     } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error)
-      setResetResult({ type: 'error', message: `Network error: ${msg}` })
+      const msg = toErrorMessage(error)
+      setResetResult({
+        type: 'error',
+        message: isNetworkError(error) ? `Network error: ${msg}` : msg,
+      })
       setShowConfirmDialog(false)
       setIsResetting(false)
     }

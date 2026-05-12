@@ -342,7 +342,7 @@ export default function MyProfileTab({ onResult }: MyProfileTabProps) {
         onResult?.({ error: res.error || 'Detection failed' })
       }
     } catch (e) {
-      onResult?.({ error: toErrorMessage(e) || 'Network error' })
+      onResult?.({ error: toErrorMessage(e) || 'Detection failed' })
     } finally {
       setDetecting(false)
     }
@@ -358,7 +358,7 @@ export default function MyProfileTab({ onResult }: MyProfileTabProps) {
         onResult?.({ error: res.error || 'Toggle failed' })
       }
     } catch (e) {
-      onResult?.({ error: toErrorMessage(e) || 'Network error' })
+      onResult?.({ error: toErrorMessage(e) || 'Toggle failed' })
     } finally {
       setToggling(false)
     }

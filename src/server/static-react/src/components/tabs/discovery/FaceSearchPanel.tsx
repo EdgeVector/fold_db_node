@@ -117,9 +117,9 @@ export default function FaceSearchPanel({ onResult }: FaceSearchPanelProps) {
         onResult({ error: res.error || 'Face search failed' })
       }
     } catch (e) {
-      const msg = toErrorMessage(e)
-      setError(msg || 'Network error')
-      onResult({ error: msg || 'Network error' })
+      const msg = toErrorMessage(e) || 'Face search failed'
+      setError(msg)
+      onResult({ error: msg })
     } finally {
       setSearching(false)
     }
@@ -138,7 +138,7 @@ export default function FaceSearchPanel({ onResult }: FaceSearchPanelProps) {
         onResult({ error: res.error || 'Connect failed' })
       }
     } catch (e) {
-      onResult({ error: toErrorMessage(e) || 'Network error' })
+      onResult({ error: toErrorMessage(e) || 'Connect failed' })
     }
   }
 

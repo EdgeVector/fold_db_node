@@ -25,7 +25,7 @@ export default function InterestsPanel({ onResult }: InterestsPanelProps) {
         setLoadError(res.error || 'Failed to load interests')
       }
     } catch (e) {
-      setLoadError(toErrorMessage(e) || 'Network error')
+      setLoadError(toErrorMessage(e) || 'Failed to load interests')
     } finally {
       setLoading(false)
     }
@@ -42,7 +42,7 @@ export default function InterestsPanel({ onResult }: InterestsPanelProps) {
         onResult({ error: res.error || 'Toggle failed' })
       }
     } catch (e) {
-      onResult({ error: toErrorMessage(e) || 'Network error' })
+      onResult({ error: toErrorMessage(e) || 'Toggle failed' })
     }
   }
 
@@ -57,7 +57,7 @@ export default function InterestsPanel({ onResult }: InterestsPanelProps) {
         onResult({ error: res.error || 'Detection failed' })
       }
     } catch (e) {
-      onResult({ error: toErrorMessage(e) || 'Network error' })
+      onResult({ error: toErrorMessage(e) || 'Detection failed' })
     } finally {
       setDetecting(false)
     }

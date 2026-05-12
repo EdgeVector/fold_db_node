@@ -16,6 +16,7 @@ import {
   type ResolveDiagnostics,
 } from '../../../api/clients/fingerprintsClient'
 import { ErrorMessage } from '../../shared/ErrorMessage'
+import { toErrorMessage } from '../../../utils/schemaUtils'
 
 type SortMode = 'recent' | 'name_asc' | 'mentions_desc' | 'trust_tier_desc'
 
@@ -160,7 +161,7 @@ export default function PersonasPanel() {
         setError(res.error ?? 'Failed to load personas')
       }
     } catch (e) {
-      setError((e as Error)?.message ?? 'Network error')
+      setError(toErrorMessage(e) || 'Failed to load personas')
     } finally {
       setLoading(false)
     }
@@ -190,7 +191,7 @@ export default function PersonasPanel() {
       })
       .catch((e: unknown) => {
         if (!cancelled) {
-          setDetailError((e as Error)?.message ?? 'Network error')
+          setDetailError(toErrorMessage(e) || 'Failed to load persona')
           setDetail(null)
         }
       })

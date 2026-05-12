@@ -8,6 +8,7 @@ import {
   type MyIdentityCardResponse,
 } from '../../../api/clients/fingerprintsClient'
 import { listContacts, type Contact } from '../../../api/clients/trustClient'
+import { toErrorMessage } from '../../../utils/schemaUtils'
 
 type AttachStage = 'idle' | 'camera' | 'detecting' | 'saving'
 
@@ -93,7 +94,7 @@ export default function MyIdentityCardPanel() {
         setError(res.error ?? 'Failed to load identity card')
       }
     } catch (e) {
-      setError((e as Error)?.message ?? 'Network error')
+      setError(toErrorMessage(e) || 'Failed to load identity card')
     } finally {
       setLoading(false)
     }
@@ -134,7 +135,7 @@ export default function MyIdentityCardPanel() {
         setSaveError(res.error ?? 'Failed to reissue identity card')
       }
     } catch (e) {
-      setSaveError((e as Error)?.message ?? 'Network error')
+      setSaveError(toErrorMessage(e) || 'Failed to reissue identity card')
     } finally {
       setSaving(false)
     }

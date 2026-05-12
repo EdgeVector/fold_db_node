@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react'
 import { useAppSelector } from '../../store/hooks'
 import { createApiClient } from '../../api/core/client'
 import { API_ENDPOINTS } from '../../api/endpoints'
+import { toErrorMessage } from '../../utils/schemaUtils'
 
 const apiClient = createApiClient()
 
@@ -78,7 +79,7 @@ export default function FeedTab() {
       setTotal(data?.total || 0)
       setFetched(true)
     } catch (err) {
-      setError((err instanceof Error ? err.message : null) || 'Network error')
+      setError(toErrorMessage(err) || 'Failed to fetch feed')
     } finally {
       setLoading(false)
     }

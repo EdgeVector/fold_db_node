@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { listIdentities, type IdentityAuditRow } from '../../../api/clients/fingerprintsClient'
+import { toErrorMessage } from '../../../utils/schemaUtils'
 
 /**
  * "Identities" audit panel — surfaces every Identity record on this
@@ -29,7 +30,7 @@ export default function ImportedIdentitiesPanel() {
         setError(res.error ?? 'Failed to load identities')
       }
     } catch (e) {
-      setError((e as Error)?.message ?? 'Network error')
+      setError(toErrorMessage(e) || 'Failed to load identities')
     } finally {
       setLoading(false)
     }

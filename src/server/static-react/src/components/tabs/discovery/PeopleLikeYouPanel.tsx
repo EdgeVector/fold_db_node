@@ -40,7 +40,7 @@ export default function PeopleLikeYouPanel({ onResult }: PeopleLikeYouPanelProps
         }
       }
     } catch (e) {
-      const msg = toErrorMessage(e) || 'Network error'
+      const msg = toErrorMessage(e) || 'Failed to load similar profiles'
       setError(msg)
       if (isLocalModeError(msg)) {
         localModeRef.current = true
@@ -74,7 +74,7 @@ export default function PeopleLikeYouPanel({ onResult }: PeopleLikeYouPanelProps
         onResult({ error: res.error || 'Connect failed' })
       }
     } catch (e) {
-      onResult({ error: toErrorMessage(e) || 'Network error' })
+      onResult({ error: toErrorMessage(e) || 'Connect failed' })
     }
   }
 

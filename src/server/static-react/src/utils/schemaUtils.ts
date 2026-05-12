@@ -9,6 +9,8 @@
  * - Query-by-key record fetching
  */
 
+import { isApiError } from '../api/core/errors'
+
 export interface SchemaLike {
   name?: string;
   descriptive_name?: string;
@@ -81,8 +83,13 @@ export function toggleSetItem<T>(set: Iterable<T>, item: T): Set<T> {
   return next
 }
 
-/** Convert an unknown error value to a string message. */
+/**
+ * Convert an unknown error value to a user-friendly message.
+ * For ApiError, defers to toUserMessage() so HTTP 4xx/5xx responses surface
+ * the server-supplied message instead of a generic "Network error" fallback.
+ */
 export function toErrorMessage(error: unknown): string {
+  if (isApiError(error)) return error.toUserMessage()
   if (error instanceof Error) return error.message
   return String(error)
 }

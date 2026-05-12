@@ -47,7 +47,7 @@ function ProfileCard({ result, onConnect }: ProfileCardProps) {
         onConnect({ error: res.error || 'Connect failed' })
       }
     } catch (e) {
-      onConnect({ error: toErrorMessage(e) || 'Network error' })
+      onConnect({ error: toErrorMessage(e) || 'Connect failed' })
     } finally {
       setSending(false)
     }
@@ -235,7 +235,7 @@ export default function DiscoveryBrowseTab({ onResult }: DiscoveryBrowseTabProps
         setSearchError(res.error || 'Search failed')
       }
     } catch (e) {
-      setSearchError(toErrorMessage(e) || 'Network error')
+      setSearchError(toErrorMessage(e) || 'Search failed')
     } finally {
       setSearching(false)
     }

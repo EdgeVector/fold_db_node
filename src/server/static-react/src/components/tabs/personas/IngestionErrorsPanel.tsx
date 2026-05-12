@@ -4,6 +4,7 @@ import {
   resolveIngestionError,
   type IngestionErrorView,
 } from '../../../api/clients/fingerprintsClient'
+import { toErrorMessage } from '../../../utils/schemaUtils'
 
 /**
  * Failed records panel. Renders unresolved IngestionError rows so the
@@ -33,7 +34,7 @@ export default function IngestionErrorsPanel() {
         setError(res.error ?? 'Failed to load ingestion errors')
       }
     } catch (e) {
-      setError((e as Error)?.message ?? 'Network error')
+      setError(toErrorMessage(e) || 'Failed to load ingestion errors')
     } finally {
       setLoading(false)
     }
@@ -63,7 +64,7 @@ export default function IngestionErrorsPanel() {
           setError(res.error ?? `Failed to ${resolved ? 'dismiss' : 'restore'}`)
         }
       } catch (e) {
-        setError((e as Error)?.message ?? 'Network error')
+        setError(toErrorMessage(e) || 'Failed to update ingestion error')
       } finally {
         setBusyId(null)
       }

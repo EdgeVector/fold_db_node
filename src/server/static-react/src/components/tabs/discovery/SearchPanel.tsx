@@ -55,9 +55,9 @@ export default function SearchPanel({ onResult }: SearchPanelProps) {
         onResult({ error: res.error || 'Search failed' })
       }
     } catch (e) {
-      const msg = toErrorMessage(e)
-      setError(msg || 'Network error')
-      onResult({ error: msg || 'Network error' })
+      const msg = toErrorMessage(e) || 'Search failed'
+      setError(msg)
+      onResult({ error: msg })
     } finally {
       setSearching(false)
     }
@@ -76,7 +76,7 @@ export default function SearchPanel({ onResult }: SearchPanelProps) {
         onResult({ error: res.error || 'Connect failed' })
       }
     } catch (e) {
-      onResult({ error: toErrorMessage(e) || 'Network error' })
+      onResult({ error: toErrorMessage(e) || 'Connect failed' })
     }
   }
 
