@@ -3,13 +3,11 @@
  * Centralized API configuration for API-STD-1 compliance
  * Extracted from repeated patterns across API clients for DRY enforcement
  */
-import { API_BASE_URLS as GENERATED_API_BASE_URLS } from "../api/endpoints";
 
 // Base Request Configuration
 export const API_REQUEST_TIMEOUT_MS = 30000;
 export const API_RETRY_ATTEMPTS = 3;
 export const API_RETRY_DELAY_MS = 1000;
-export const API_BATCH_REQUEST_LIMIT = 20;
 
 // Operation-Specific Timeout Values
 export const API_TIMEOUTS = {
@@ -57,9 +55,6 @@ export const API_CACHE_TTL = {
   INDIVIDUAL_TRANSFORMS: 300000,
   MUTATION_HISTORY: 300000,
 } as const;
-
-// API Base URLs (generated from Rust OpenAPI via endpoints.ts)
-export const API_BASE_URLS = GENERATED_API_BASE_URLS;
 
 // HTTP Status Codes
 export const HTTP_STATUS_CODES = {
@@ -139,16 +134,6 @@ export const API_CONFIG = {
 // Schema State Constants - re-exported from canonical source (schemas.js)
 import { SCHEMA_STATES } from "./schemas";
 export { SCHEMA_STATES };
-
-// Schema Operation Types
-export const SCHEMA_OPERATIONS = {
-  READ: "read",
-  WRITE: "write",
-  APPROVE: "approve",
-  BLOCK: "block",
-  MUTATION: "mutation",
-  QUERY: "query",
-} as const;
 
 // Cache Key Prefixes
 export const CACHE_KEYS = {
