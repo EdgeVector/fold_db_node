@@ -8,7 +8,6 @@
  */
 
 // Tab Configuration and Navigation
-export const TAB_TRANSITION_DURATION_MS = 200;
 export const FORM_FIELD_DEBOUNCE_MS = 300;
 
 export interface TabDefinition {
@@ -104,7 +103,7 @@ export const UI_STATES = {
 } as const;
 
 // Mutation Type Constants
-export interface MutationTypeOption {
+interface MutationTypeOption {
   value: string;
   label: string;
 }
@@ -128,13 +127,6 @@ export const SCHEMA_BADGE_COLORS: Record<string, string> = {
   blocked: "badge badge-error",
   pending: "badge badge-warning",
 };
-
-// Authentication Indicators
-export const AUTH_INDICATORS = {
-  authenticated: "🔐",
-  unauthenticated: "🔓",
-  loading: "⏳",
-} as const;
 
 // Help Text Constants
 export const HELP_TEXT = {
