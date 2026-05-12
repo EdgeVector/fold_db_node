@@ -11,13 +11,7 @@ export class CloudApiError extends Error {
   }
 }
 
-export interface StorageInfo {
-  used_bytes: number;
-  quota_bytes: number;
-  plan: string;
-}
-
-export interface SubscriptionStatus {
+interface SubscriptionStatus {
   ok: boolean;
   plan: string;
   storage: {
@@ -92,15 +86,6 @@ async function cloudFetch(
 
 export async function getSubscriptionStatus(): Promise<SubscriptionStatus> {
   return cloudFetch("/api/subscription/status", { method: "GET" });
-}
-
-export async function getStorageInfo(): Promise<StorageInfo> {
-  const result = await cloudFetch("/api/sync/storage", {
-    method: "POST",
-    body: JSON.stringify({ action: "get_storage" }),
-  });
-  if (!result.ok) throw new Error(result.error || "Failed to get storage info");
-  return result.storage;
 }
 
 export async function createCheckoutSession(
