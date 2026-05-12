@@ -8,12 +8,12 @@ import type { Schema, SchemaState } from '../../types/schema';
 import { normalizeSchemaState } from '../../utils/rangeSchemaHelpers.js';
 
 // Schema-specific response types
-export interface SchemasByStateResponse {
+interface SchemasByStateResponse {
   data: string[];
   state: string;
 }
 
-export type SchemasWithStateResponse = Record<string, SchemaState>;
+type SchemasWithStateResponse = Record<string, SchemaState>;
 
 const FALLBACK_SCHEMA_STATE = SCHEMA_STATES.AVAILABLE as SchemaState;
 const RECOGNIZED_SCHEMA_STATES: ReadonlySet<SchemaState> = new Set<SchemaState>([
@@ -62,7 +62,7 @@ function extractRawSchemaState(schema: unknown): unknown {
   return candidates.find((candidate) => candidate !== undefined);
 }
 
-export interface SchemaStatusResponse {
+interface SchemaStatusResponse {
   available: number;
   approved: number;
   blocked: number;
