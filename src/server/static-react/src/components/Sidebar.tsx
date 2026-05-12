@@ -118,5 +118,4 @@ function Sidebar({ activeTab, onTabChange }: SidebarProps) {
   )
 }
 
-export { SIDEBAR_ITEMS }
 export default Sidebar
