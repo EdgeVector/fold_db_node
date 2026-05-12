@@ -113,31 +113,11 @@ export const DEFAULT_SCHEMA_STATE: DefaultSchemaState = {
  * Standard error messages for schema operations
  */
 export const SCHEMA_ERROR_MESSAGES = {
-  // Network and API errors
   FETCH_FAILED: "Failed to fetch schemas from server",
-  NETWORK_ERROR: "Network error occurred while fetching schemas",
-  API_TIMEOUT: "Request timed out - please try again",
-  UNAUTHORIZED: "Not authorized to perform this operation",
-
-  // Schema operation errors
   APPROVE_FAILED: "Failed to approve schema",
   BLOCK_FAILED: "Failed to block schema",
   UNLOAD_FAILED: "Failed to unload schema",
   LOAD_FAILED: "Failed to load schema",
-
-  // Validation errors
-  SCHEMA_NOT_FOUND: "Schema not found",
-  INVALID_SCHEMA_STATE: "Invalid schema state for operation",
-  SCHEMA_ALREADY_APPROVED: "Schema is already approved",
-  SCHEMA_ALREADY_BLOCKED: "Schema is already blocked",
-
-  // Cache and persistence errors
-  CACHE_INVALIDATION_FAILED: "Failed to invalidate schema cache",
-  PERSISTENCE_ERROR: "Failed to persist schema state",
-
-  // General errors
-  UNKNOWN_ERROR: "An unknown error occurred",
-  OPERATION_CANCELLED: "Operation was cancelled by user",
 } as const;
 
 // ============================================================================
