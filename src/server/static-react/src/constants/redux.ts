@@ -34,29 +34,14 @@ export const SCHEMA_OPERATION_TIMEOUT_MS = 10000;
 // REDUX ACTION TYPE CONSTANTS
 // ============================================================================
 
-/**
- * Base action types for schema slice
- */
+/** Action types for schema async thunks (RTK auto-generates sync reducer types). */
 export const SCHEMA_ACTION_TYPES = {
-  // Async thunk action types
   FETCH_SCHEMAS: "schemas/fetchSchemas",
   APPROVE_SCHEMA: "schemas/approveSchema",
   BLOCK_SCHEMA: "schemas/blockSchema",
   UNLOAD_SCHEMA: "schemas/unloadSchema",
   LOAD_SCHEMA: "schemas/loadSchema",
-
-  // Synchronous action types
-  SET_ACTIVE_SCHEMA: "schemas/setActiveSchema",
-  UPDATE_SCHEMA_STATUS: "schemas/updateSchemaStatus",
-  SET_LOADING: "schemas/setLoading",
-  SET_ERROR: "schemas/setError",
-  CLEAR_ERROR: "schemas/clearError",
-  CLEAR_OPERATION_ERROR: "schemas/clearOperationError",
-  INVALIDATE_CACHE: "schemas/invalidateCache",
-  RESET_SCHEMAS: "schemas/resetSchemas",
 } as const;
-
-export type SchemaActionType = (typeof SCHEMA_ACTION_TYPES)[keyof typeof SCHEMA_ACTION_TYPES];
 
 // ============================================================================
 // DEFAULT STATE VALUES
