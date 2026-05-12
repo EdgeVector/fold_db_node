@@ -47,13 +47,13 @@ export const SCHEMA_ACTION_TYPES = {
 // DEFAULT STATE VALUES
 // ============================================================================
 
-export interface SchemaCacheMeta {
+interface SchemaCacheMeta {
   ttl: number;
   version: string;
   lastUpdated: number | null;
 }
 
-export interface DefaultSchemaState {
+interface DefaultSchemaState {
   schemas: Record<string, unknown>;
   loading: {
     fetch: boolean;
