@@ -10,7 +10,7 @@ interface SchemaLike {
 /** Derive a category from schema field_interest_categories.
  *  Returns the most common interest category across the schema's fields,
  *  falling back to schema name if no interest categories are assigned. */
-export function inferCategory(schema: Schema | SchemaLike): string {
+function inferCategory(schema: Schema | SchemaLike): string {
   const s = schema as SchemaLike
   if (s.field_interest_categories) {
     const counts: Record<string, number> = {}
@@ -45,7 +45,7 @@ export function fieldCount(schemas: Array<Schema | SchemaLike>): number {
   return count
 }
 
-export interface PreviewItem {
+interface PreviewItem {
   schema: string
   field: string
   type: string
@@ -63,19 +63,6 @@ export function buildPreviewItems(schemas: Array<Schema | SchemaLike>): PreviewI
     }
   }
   return items
-}
-
-/** Map numeric trust tier to human-readable label. */
-export const TRUST_TIER_LABELS: Record<number, string> = {
-  0: 'Public',
-  1: 'Outer',
-  2: 'Trusted',
-  3: 'Inner',
-  4: 'Owner',
-}
-
-export function trustTierLabel(tier: number): string {
-  return TRUST_TIER_LABELS[tier] ?? `Tier ${tier}`
 }
 
 export function isLocalModeError(msg: string | null | undefined): boolean {
