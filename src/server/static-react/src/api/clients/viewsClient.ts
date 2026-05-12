@@ -2,13 +2,7 @@
 
 import { getSharedClient } from '../core/client';
 
-export interface ViewState {
-  Available: undefined;
-  Approved: undefined;
-  Blocked: undefined;
-}
-
-export interface TransformView {
+interface TransformView {
   name: string;
   schema_type: string;
   key_config?: { hash_field?: string; range_field?: string } | null;
@@ -23,7 +17,7 @@ export interface TransformView {
 
 export type ViewWithState = [TransformView, string];
 
-export interface ViewListResponse {
+interface ViewListResponse {
   views: ViewWithState[];
   count: number;
 }
@@ -34,29 +28,6 @@ export async function listViews(): Promise<ViewWithState[]> {
   const resp = await client().get<ViewListResponse>('/views');
   if (!resp.success) throw new Error(resp.error || 'Failed to list views');
   return resp.data?.views ?? [];
-}
-
-export async function getView(name: string): Promise<TransformView> {
-  const resp = await client().get<{ view: TransformView }>(`/view/${encodeURIComponent(name)}`);
-  if (!resp.success) throw new Error(resp.error || `Failed to get view: ${name}`);
-  return resp.data!.view;
-}
-
-export interface CreateViewRequest {
-  name: string;
-  schema_type: string;
-  key_config?: { hash_field?: string; range_field?: string } | null;
-  input_queries: Array<{
-    schema_name: string;
-    fields: string[];
-  }>;
-  wasm_transform?: string | null; // base64
-  output_fields: Record<string, string>;
-}
-
-export async function createView(req: CreateViewRequest): Promise<void> {
-  const resp = await client().post<{ success: boolean }>('/view', req);
-  if (!resp.success) throw new Error(resp.error || 'Failed to create view');
 }
 
 export async function approveView(name: string): Promise<void> {
