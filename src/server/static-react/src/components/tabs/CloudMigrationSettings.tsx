@@ -12,9 +12,9 @@ import {
 // Poll configuration for post-Stripe-checkout upgrade detection. Stripe redirects
 // back to the app before the webhook that flips the user to `plan=paid` has
 // necessarily fired; we poll for up to 20s to bridge that race window.
-export const UPGRADE_POLL_INTERVAL_MS = 2000
-export const UPGRADE_POLL_MAX_MS = 20000
-export const CANCELLED_BANNER_MS = 5000
+const UPGRADE_POLL_INTERVAL_MS = 2000
+const UPGRADE_POLL_MAX_MS = 20000
+const CANCELLED_BANNER_MS = 5000
 
 // Cloud state is a single source of truth derived from the server — never
 // fabricated. Values:
