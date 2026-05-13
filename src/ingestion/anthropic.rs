@@ -93,10 +93,7 @@ pub async fn validate_key(key: &str) -> Result<(), AnthropicValidationError> {
 /// Variant of [`validate_key`] that lets tests point at a mock server.
 /// `base` is the URL prefix (no trailing slash needed) — `MODELS_PATH`
 /// is appended to form the request.
-pub async fn validate_key_with_base(
-    key: &str,
-    base: &str,
-) -> Result<(), AnthropicValidationError> {
+pub async fn validate_key_with_base(key: &str, base: &str) -> Result<(), AnthropicValidationError> {
     let url = format!("{}{}", base.trim_end_matches('/'), MODELS_PATH);
 
     // trace-egress: skip-3p (Anthropic API; third-party, does not honour
@@ -128,9 +125,7 @@ pub async fn validate_key_with_base(
     // Everything else — 5xx, 429, unexpected status — is treated as
     // transient so we don't refuse to save when Anthropic is having a
     // bad day.
-    if status == reqwest::StatusCode::UNAUTHORIZED
-        || status == reqwest::StatusCode::FORBIDDEN
-    {
+    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
         let upstream_message = extract_upstream_message(response).await;
         return Err(AnthropicValidationError::Invalid {
             status: status.as_u16(),

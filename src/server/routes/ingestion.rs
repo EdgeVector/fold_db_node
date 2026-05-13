@@ -284,8 +284,7 @@ pub async fn save_ingestion_config(
                         detail = %detail,
                         "Anthropic key probe failed transiently; saving config anyway and returning soft-warning"
                     );
-                    transient_warning =
-                        Some(("could_not_validate_key".to_string(), detail));
+                    transient_warning = Some(("could_not_validate_key".to_string(), detail));
                 }
             }
         }
@@ -1061,7 +1060,10 @@ mod tests {
         let body: serde_json::Value = test::read_body_json(resp).await;
         assert_eq!(body["error"], "invalid_anthropic_key");
         assert!(
-            body["detail"].as_str().unwrap_or("").contains("invalid x-api-key"),
+            body["detail"]
+                .as_str()
+                .unwrap_or("")
+                .contains("invalid x-api-key"),
             "detail must echo upstream message, got: {body}"
         );
         // No persistence: neither the JSON config nor the sensitive key file
@@ -1184,7 +1186,10 @@ mod tests {
             .to_request();
         let resp = test::call_service(&app, req).await;
         assert_eq!(resp.status().as_u16(), 200, "Ollama save must succeed");
-        assert_eq!(server.received_requests().await.unwrap_or_default().len(), 0);
+        assert_eq!(
+            server.received_requests().await.unwrap_or_default().len(),
+            0
+        );
     }
 
     /// `***configured***` is the redaction placeholder served by GET
@@ -1228,6 +1233,9 @@ mod tests {
             .to_request();
         let resp = test::call_service(&app, req).await;
         assert_eq!(resp.status().as_u16(), 200, "redacted save must 200");
-        assert_eq!(server.received_requests().await.unwrap_or_default().len(), 0);
+        assert_eq!(
+            server.received_requests().await.unwrap_or_default().len(),
+            0
+        );
     }
 }
