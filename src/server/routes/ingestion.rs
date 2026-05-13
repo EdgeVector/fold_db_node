@@ -243,6 +243,53 @@ pub async fn save_ingestion_config(
     let saved_config = request.into_inner();
     let cfg_dir = config_dir.as_path().to_path_buf();
 
+    // Validate the Anthropic key BEFORE we persist anything. The probe is a
+    // single GET against /v1/models — zero tokens, zero cost, ~300ms. An
+    // invalid key fails the save loudly here instead of silently passing
+    // through and only surfacing as a 401 the first time the user actually
+    // ingests a file. Transient errors (5xx, DNS, timeout) don't block the
+    // save — we soft-warn and persist, because refusing to save during an
+    // Anthropic outage would be worse than the silent-save bug we're fixing.
+    //
+    // Empty / `***configured***` means "keep the existing on-disk key" — that
+    // path doesn't need re-probing (and we don't have the cleartext to probe
+    // with), so skip validation there. Matches the persistence rule in
+    // IngestionConfig::save_to_file.
+    let mut transient_warning: Option<(String, String)> = None;
+    if saved_config.provider == AIProvider::Anthropic {
+        let incoming_key = saved_config.anthropic.api_key.as_str();
+        if !incoming_key.is_empty() && incoming_key != "***configured***" {
+            match crate::ingestion::anthropic::validate_key(incoming_key).await {
+                Ok(()) => {}
+                Err(crate::ingestion::anthropic::AnthropicValidationError::Invalid {
+                    upstream_message,
+                    ..
+                }) => {
+                    tracing::warn!(
+                        target: "fold_node::ingestion",
+                        upstream_message = %upstream_message,
+                        "Rejecting ingestion config save: Anthropic key validation returned auth error"
+                    );
+                    return HttpResponse::BadRequest().json(json!({
+                        "success": false,
+                        "error": "invalid_anthropic_key",
+                        "detail": upstream_message,
+                    }));
+                }
+                Err(crate::ingestion::anthropic::AnthropicValidationError::Transient {
+                    detail,
+                }) => {
+                    tracing::warn!(
+                        target: "fold_node::ingestion",
+                        detail = %detail,
+                        "Anthropic key probe failed transiently; saving config anyway and returning soft-warning"
+                    );
+                    transient_warning = Some(("could_not_validate_key".to_string(), detail));
+                }
+            }
+        }
+    }
+
     // AI config is per-device (saved to ingestion_config.json only, not Sled).
     // A laptop might run Ollama locally while a phone uses Anthropic's API.
     match crate::ingestion::config::IngestionConfig::save_to_file(&cfg_dir, &saved_config) {
@@ -270,10 +317,15 @@ pub async fn save_ingestion_config(
             // Also reload the LLM query service so model changes take effect
             llm_state.reload().await;
 
-            HttpResponse::Ok().json(json!({
+            let mut body = json!({
                 "success": true,
                 "message": "Configuration saved successfully"
-            }))
+            });
+            if let Some((warning, detail)) = transient_warning {
+                body["warning"] = json!(warning);
+                body["detail"] = json!(detail);
+            }
+            HttpResponse::Ok().json(body)
         }
         Err(e) => HttpResponse::InternalServerError().json(json!({
             "success": false,
@@ -922,5 +974,268 @@ mod tests {
         assert_eq!(parsed.folder_path, "sample_data");
         assert_eq!(parsed.schema_hint, Some("TestSchema".to_string()));
         assert_eq!(parsed.auto_execute, Some(true));
+    }
+
+    // ── save_ingestion_config: Anthropic key validation ─────────────────
+    //
+    // Regression for the dogfood-reported bug where a bad Anthropic key
+    // saved cleanly via POST /api/ingestion/config and only surfaced as a
+    // 401 the first time the user attempted an ingestion. The save handler
+    // now probes /v1/models with the supplied key and refuses to persist
+    // on a definitive 401/403, while soft-warning on transient errors.
+
+    use wiremock::matchers::{header, method, path as wm_path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    /// Tiny RAII wrapper so each test sets the probe override env var and
+    /// clears it on drop. Cleared at drop time so a panicking assertion
+    /// doesn't poison neighbour tests with leftover state.
+    struct ProbeBaseOverride;
+    impl ProbeBaseOverride {
+        fn set(base: &str) -> Self {
+            std::env::set_var("FOLD_ANTHROPIC_PROBE_BASE_URL", base);
+            Self
+        }
+    }
+    impl Drop for ProbeBaseOverride {
+        fn drop(&mut self) {
+            std::env::remove_var("FOLD_ANTHROPIC_PROBE_BASE_URL");
+        }
+    }
+
+    /// 400 + structured `{error: "invalid_anthropic_key"}` when Anthropic
+    /// answers the probe with 401, AND no on-disk persistence.
+    #[allow(clippy::await_holding_lock)]
+    #[actix_web::test]
+    async fn save_config_rejects_bad_anthropic_key_with_400_and_does_not_persist() {
+        let _guard = crate::ingestion::config::anthropic_api_key_env_lock();
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(wm_path("/v1/models"))
+            .and(header("x-api-key", "sk-ant-bogus"))
+            .respond_with(ResponseTemplate::new(401).set_body_json(serde_json::json!({
+                "type": "error",
+                "error": {
+                    "type": "authentication_error",
+                    "message": "invalid x-api-key"
+                }
+            })))
+            .mount(&server)
+            .await;
+        let _probe = ProbeBaseOverride::set(&server.uri());
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let llm_state = crate::fold_node::llm_query::LlmQueryState::new(tmp.path().to_path_buf());
+        let ingestion_service: IngestionServiceState = tokio::sync::RwLock::new(None);
+        let app = test::init_service(
+            App::new()
+                .app_data(web::Data::new(ingestion_service))
+                .app_data(web::Data::new(llm_state))
+                .app_data(web::Data::new(crate::server::startup::ConfigDir(
+                    tmp.path().to_path_buf(),
+                )))
+                .route("/config", web::post().to(save_ingestion_config)),
+        )
+        .await;
+
+        let body = serde_json::json!({
+            "provider": "Anthropic",
+            "anthropic": {
+                "api_key": "sk-ant-bogus",
+                "model": "claude-haiku-4-5-20251001",
+                "base_url": "https://api.anthropic.com"
+            }
+        });
+        let req = test::TestRequest::post()
+            .uri("/config")
+            .set_json(&body)
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(
+            resp.status().as_u16(),
+            400,
+            "bad key must return 400, not silently persist"
+        );
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert_eq!(body["error"], "invalid_anthropic_key");
+        assert!(
+            body["detail"]
+                .as_str()
+                .unwrap_or("")
+                .contains("invalid x-api-key"),
+            "detail must echo upstream message, got: {body}"
+        );
+        // No persistence: neither the JSON config nor the sensitive key file
+        // should exist after a rejected save.
+        assert!(
+            !tmp.path().join("ingestion_config.json").exists(),
+            "rejected save must not write ingestion_config.json"
+        );
+        assert!(
+            crate::ingestion::anthropic_key_store::load(tmp.path())
+                .expect("load store")
+                .is_none(),
+            "rejected save must not write the sensitive key store"
+        );
+    }
+
+    /// Transient upstream failure → 200 + `warning` field, key IS persisted.
+    /// We can't know whether the key is good when Anthropic is down, so
+    /// blocking save would be worse than the silent-save bug we're fixing.
+    #[allow(clippy::await_holding_lock)]
+    #[actix_web::test]
+    async fn save_config_soft_warns_on_transient_probe_failure() {
+        let _guard = crate::ingestion::config::anthropic_api_key_env_lock();
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(wm_path("/v1/models"))
+            .respond_with(ResponseTemplate::new(500).set_body_string("internal error"))
+            .mount(&server)
+            .await;
+        let _probe = ProbeBaseOverride::set(&server.uri());
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let llm_state = crate::fold_node::llm_query::LlmQueryState::new(tmp.path().to_path_buf());
+        let ingestion_service: IngestionServiceState = tokio::sync::RwLock::new(None);
+        let app = test::init_service(
+            App::new()
+                .app_data(web::Data::new(ingestion_service))
+                .app_data(web::Data::new(llm_state))
+                .app_data(web::Data::new(crate::server::startup::ConfigDir(
+                    tmp.path().to_path_buf(),
+                )))
+                .route("/config", web::post().to(save_ingestion_config)),
+        )
+        .await;
+
+        let body = serde_json::json!({
+            "provider": "Anthropic",
+            "anthropic": {
+                "api_key": "sk-ant-likely-fine",
+                "model": "claude-haiku-4-5-20251001",
+                "base_url": "https://api.anthropic.com"
+            }
+        });
+        let req = test::TestRequest::post()
+            .uri("/config")
+            .set_json(&body)
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status().as_u16(), 200, "transient must still 200");
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert_eq!(body["success"], true);
+        assert_eq!(body["warning"], "could_not_validate_key");
+        assert!(
+            body["detail"].as_str().is_some(),
+            "warning response must carry a detail string"
+        );
+        assert!(
+            tmp.path().join("ingestion_config.json").exists(),
+            "transient failure must still persist the saved config"
+        );
+        assert_eq!(
+            crate::ingestion::anthropic_key_store::load(tmp.path())
+                .expect("load store")
+                .as_deref(),
+            Some("sk-ant-likely-fine"),
+            "transient failure must still persist the api key"
+        );
+    }
+
+    /// Ollama provider doesn't trigger the Anthropic probe at all — even if
+    /// the env override points at a server that would reject everything,
+    /// we must not call it. Asserts the route never hits the mock.
+    #[allow(clippy::await_holding_lock)]
+    #[actix_web::test]
+    async fn save_config_does_not_probe_when_provider_is_ollama() {
+        let _guard = crate::ingestion::config::anthropic_api_key_env_lock();
+
+        let server = MockServer::start().await;
+        // Note: no `.mount(...)` — wiremock auto-asserts zero matched
+        // requests when `.verify()` runs at drop. Any inbound request will
+        // return 404 and we'd be fine, but the explicit absence of a Mock
+        // documents the invariant.
+        let _probe = ProbeBaseOverride::set(&server.uri());
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let llm_state = crate::fold_node::llm_query::LlmQueryState::new(tmp.path().to_path_buf());
+        let ingestion_service: IngestionServiceState = tokio::sync::RwLock::new(None);
+        let app = test::init_service(
+            App::new()
+                .app_data(web::Data::new(ingestion_service))
+                .app_data(web::Data::new(llm_state))
+                .app_data(web::Data::new(crate::server::startup::ConfigDir(
+                    tmp.path().to_path_buf(),
+                )))
+                .route("/config", web::post().to(save_ingestion_config)),
+        )
+        .await;
+
+        let body = serde_json::json!({
+            "provider": "Ollama",
+            "ollama": {
+                "model": "llama3.2",
+                "base_url": "http://localhost:11434"
+            }
+        });
+        let req = test::TestRequest::post()
+            .uri("/config")
+            .set_json(&body)
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status().as_u16(), 200, "Ollama save must succeed");
+        assert_eq!(
+            server.received_requests().await.unwrap_or_default().len(),
+            0
+        );
+    }
+
+    /// `***configured***` is the redaction placeholder served by GET
+    /// /api/ingestion/config when a real key already lives on disk. A save
+    /// that echoes that placeholder back must NOT probe (we don't have the
+    /// cleartext) and must succeed — matching the existing "preserve key
+    /// when empty/redacted" semantics in IngestionConfig::save_to_file.
+    #[allow(clippy::await_holding_lock)]
+    #[actix_web::test]
+    async fn save_config_does_not_probe_redacted_placeholder() {
+        let _guard = crate::ingestion::config::anthropic_api_key_env_lock();
+
+        let server = MockServer::start().await;
+        let _probe = ProbeBaseOverride::set(&server.uri());
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let llm_state = crate::fold_node::llm_query::LlmQueryState::new(tmp.path().to_path_buf());
+        let ingestion_service: IngestionServiceState = tokio::sync::RwLock::new(None);
+        let app = test::init_service(
+            App::new()
+                .app_data(web::Data::new(ingestion_service))
+                .app_data(web::Data::new(llm_state))
+                .app_data(web::Data::new(crate::server::startup::ConfigDir(
+                    tmp.path().to_path_buf(),
+                )))
+                .route("/config", web::post().to(save_ingestion_config)),
+        )
+        .await;
+
+        let body = serde_json::json!({
+            "provider": "Anthropic",
+            "anthropic": {
+                "api_key": "***configured***",
+                "model": "claude-haiku-4-5-20251001",
+                "base_url": "https://api.anthropic.com"
+            }
+        });
+        let req = test::TestRequest::post()
+            .uri("/config")
+            .set_json(&body)
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status().as_u16(), 200, "redacted save must 200");
+        assert_eq!(
+            server.received_requests().await.unwrap_or_default().len(),
+            0
+        );
     }
 }

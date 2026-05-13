@@ -17,7 +17,13 @@ const mockedClient = vi.mocked(ingestionClient as unknown as {
 
 const apiOk = <T,>(data: T) => ({ success: true as const, data, status: 200 });
 
-function Harness({ initial }: { initial?: Partial<AiStepFields> }) {
+function Harness({
+  initial,
+  apiKeyError,
+}: {
+  initial?: Partial<AiStepFields>;
+  apiKeyError?: string | null;
+}) {
   const [fields, setFields] = useState<AiStepFields>({
     provider: 'Anthropic',
     anthropicApiKey: '',
@@ -31,7 +37,13 @@ function Harness({ initial }: { initial?: Partial<AiStepFields> }) {
     [],
   );
   return (
-    <ConfigureAiStep fields={fields} onChange={onChange} onNext={vi.fn()} onSkip={vi.fn()} />
+    <ConfigureAiStep
+      fields={fields}
+      onChange={onChange}
+      onNext={vi.fn()}
+      onSkip={vi.fn()}
+      apiKeyError={apiKeyError}
+    />
   );
 }
 
@@ -84,6 +96,27 @@ describe('ConfigureAiStep — Ollama Setup hint', () => {
     const pull = await screen.findByTestId('ollama-setup-pull', {}, { timeout: 2000 });
     expect(pull.textContent).toMatch(/\$ ollama pull/);
     expect(screen.queryByTestId('ollama-setup-detected')).toBeNull();
+  });
+
+  // Bootstrap returns HTTP 400 `invalid_anthropic_key` when Anthropic
+  // rejects the supplied key. OnboardingWizard bounces back to this step
+  // and passes the upstream detail via `apiKeyError`. The step must
+  // render it inline next to the API key input so the user can act on
+  // it without hunting through a generic toast.
+  it('renders apiKeyError inline next to the API key field', () => {
+    render(
+      <Harness
+        initial={{ provider: 'Anthropic', anthropicApiKey: 'sk-ant-bogus' }}
+        apiKeyError="invalid x-api-key"
+      />,
+    );
+    const error = screen.getByTestId('api-key-error');
+    expect(error.textContent).toMatch(/invalid x-api-key/);
+  });
+
+  it('does not render the api-key-error block when apiKeyError is null', () => {
+    render(<Harness initial={{ provider: 'Anthropic' }} apiKeyError={null} />);
+    expect(screen.queryByTestId('api-key-error')).toBeNull();
   });
 
   it('uses the typed model in the pull hint when Ollama is unreachable', async () => {

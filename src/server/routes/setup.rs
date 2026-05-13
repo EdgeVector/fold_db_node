@@ -83,6 +83,23 @@ pub struct BootstrapResponse {
     /// Set when cloud registration succeeded.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cloud: Option<CloudInfo>,
+    /// Set when an Anthropic key was supplied but couldn't be definitively
+    /// validated due to a transient failure (DNS, 5xx, timeout). The key is
+    /// still persisted; the UI should show this so the user knows the next
+    /// ingestion attempt may surface a key problem the probe couldn't catch.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub warning: Option<BootstrapWarning>,
+}
+
+/// Soft-warning payload attached to a successful `POST /api/setup/bootstrap`
+/// response. Mirrors the `{warning, detail}` shape used by
+/// `POST /api/ingestion/config` so the UI can render both paths uniformly.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct BootstrapWarning {
+    /// Machine-readable warning code (e.g. `"could_not_validate_key"`).
+    pub warning: String,
+    /// Human-readable detail — typically the upstream error message.
+    pub detail: String,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -154,6 +171,13 @@ pub async fn bootstrap(
     let req = req.into_inner();
     match run_bootstrap(state.get_ref(), config_dir.get_ref(), &marker_path, req).await {
         Ok(resp) => HttpResponse::Ok().json(resp),
+        Err(BootstrapError::InvalidAnthropicKey { detail }) => {
+            HttpResponse::BadRequest().json(json!({
+                "ok": false,
+                "error": "invalid_anthropic_key",
+                "detail": detail,
+            }))
+        }
         Err(BootstrapError::Conflict(msg)) => HttpResponse::Conflict().json(json!({
             "ok": false,
             "error": "cloud_conflict",
@@ -169,6 +193,11 @@ pub async fn bootstrap(
 
 #[derive(Debug)]
 enum BootstrapError {
+    /// Anthropic auth probe returned 401/403 for the supplied key. Surfaced
+    /// as HTTP 400 so the wizard can highlight the key field and refuse to
+    /// advance until the user fixes it. We fail BEFORE persisting the key
+    /// or running the rest of bootstrap — there's no rollback needed.
+    InvalidAnthropicKey { detail: String },
     /// Recovery phrase + invite code disagreed with Exemem's existing
     /// registration for that key. Surfaced as HTTP 409.
     Conflict(String),
@@ -191,6 +220,19 @@ async fn run_bootstrap(
     marker_path: &std::path::Path,
     req: BootstrapRequest,
 ) -> Result<BootstrapResponse, BootstrapError> {
+    // ---- (1) Validate any supplied Anthropic key BEFORE we mint an
+    // identity or touch anything else on disk. A definitive 401/403
+    // returns a clean 400 with no rollback needed; transient failures
+    // (DNS, 5xx, timeout) attach a warning to the success response and
+    // proceed. We can't do this inside run_bootstrap_post_identity
+    // because by then we've already provisioned the identity tree, and
+    // rolling that back over a typo'd key wastes work the user can fix
+    // by just re-submitting.
+    let transient_warning = match probe_anthropic_key_if_needed(&req).await {
+        Ok(w) => w,
+        Err(detail) => return Err(BootstrapError::InvalidAnthropicKey { detail }),
+    };
+
     // ---- (2-3) Identity: derive from phrase or generate fresh, then
     //            persist ENC:-prefixed under the keychain master key when
     //            `os-keychain` is on. Both branches MUST mint the master
@@ -283,7 +325,49 @@ async fn run_bootstrap(
         user_hash,
         recovery_phrase,
         cloud: cloud_info,
+        warning: transient_warning,
     })
+}
+
+/// Probe the Anthropic API with the supplied key when the request asks for
+/// the Anthropic provider. Returns:
+///   - `Ok(None)` when no probe is needed (provider != anthropic, no key, etc.)
+///     or when the key passed validation cleanly.
+///   - `Ok(Some(BootstrapWarning))` when the probe failed transiently —
+///     bootstrap should still persist the key and attach the warning to the
+///     success response.
+///   - `Err(detail)` on a definitive 401/403 — bootstrap should reject the
+///     request with HTTP 400 and not persist anything.
+async fn probe_anthropic_key_if_needed(
+    req: &BootstrapRequest,
+) -> Result<Option<BootstrapWarning>, String> {
+    if req.ai_provider.as_deref() != Some("anthropic") {
+        return Ok(None);
+    }
+    let Some(key) = req.anthropic_api_key.as_deref().filter(|s| !s.is_empty()) else {
+        // Empty / missing key here is caught later by the anthropic arm of
+        // run_bootstrap_post_identity, which returns an explicit error.
+        // Don't probe — there's nothing to validate.
+        return Ok(None);
+    };
+    match crate::ingestion::anthropic::validate_key(key).await {
+        Ok(()) => Ok(None),
+        Err(crate::ingestion::anthropic::AnthropicValidationError::Invalid {
+            upstream_message,
+            ..
+        }) => Err(upstream_message),
+        Err(crate::ingestion::anthropic::AnthropicValidationError::Transient { detail }) => {
+            tracing::warn!(
+                target: "fold_node::bootstrap",
+                detail = %detail,
+                "Bootstrap proceeding despite transient Anthropic key probe failure"
+            );
+            Ok(Some(BootstrapWarning {
+                warning: "could_not_validate_key".to_string(),
+                detail,
+            }))
+        }
+    }
 }
 
 /// Steps 4–8: identity card, optional cloud registration, AI config, and
@@ -848,5 +932,169 @@ mod tests {
             serde_json::from_slice(&std::fs::read(&path).expect("read ingestion_config.json"))
                 .expect("parse ingestion_config.json");
         assert_eq!(on_disk, cfg, "round-trip JSON must match input");
+    }
+
+    // ── Anthropic key validation on bootstrap ────────────────────────
+    //
+    // The bootstrap handler now probes /v1/models with the supplied
+    // Anthropic key before doing anything else. Definitive 401/403 →
+    // HTTP 400 + structured error, identity is NEVER provisioned.
+    // Transient failure → HTTP 200 with a `warning` field, key IS
+    // persisted. These tests pin both paths through the route. The
+    // helper module's wiremock-backed tests cover the probe itself; here
+    // we just verify the route's response shape and persistence
+    // behavior.
+
+    use wiremock::matchers::{method as wm_method, path as wm_path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    /// RAII override of FOLD_ANTHROPIC_PROBE_BASE_URL so the route's
+    /// validate_key call hits the test wiremock instead of api.anthropic.com.
+    struct ProbeBaseOverride;
+    impl ProbeBaseOverride {
+        fn set(base: &str) -> Self {
+            std::env::set_var("FOLD_ANTHROPIC_PROBE_BASE_URL", base);
+            Self
+        }
+    }
+    impl Drop for ProbeBaseOverride {
+        fn drop(&mut self) {
+            std::env::remove_var("FOLD_ANTHROPIC_PROBE_BASE_URL");
+        }
+    }
+
+    #[actix_web::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn bootstrap_rejects_bad_anthropic_key_with_400_and_no_side_effects() {
+        let _g = home_lock();
+        let tmp = tempfile::tempdir().unwrap();
+        std::env::set_var(FOLDDB_HOME_VAR, tmp.path());
+
+        let server = MockServer::start().await;
+        Mock::given(wm_method("GET"))
+            .and(wm_path("/v1/models"))
+            .respond_with(ResponseTemplate::new(401).set_body_json(serde_json::json!({
+                "type": "error",
+                "error": {
+                    "type": "authentication_error",
+                    "message": "invalid x-api-key"
+                }
+            })))
+            .mount(&server)
+            .await;
+        let _probe = ProbeBaseOverride::set(&server.uri());
+
+        let (state, config_dir) = build_app_state(tmp.path());
+        let body = web::Json(BootstrapRequest {
+            name: "test".into(),
+            email: None,
+            birthday: None,
+            ai_provider: Some("anthropic".to_string()),
+            anthropic_api_key: Some("sk-ant-bogus".to_string()),
+            ollama_url: None,
+            ollama_model: None,
+            enable_cloud: false,
+            invite_code: None,
+            recovery_phrase: None,
+        });
+        let resp = bootstrap(state.clone(), config_dir.clone(), body)
+            .await
+            .respond_to(&actix_web::test::TestRequest::default().to_http_request());
+        assert_eq!(resp.status(), 400, "bad anthropic key must return 400");
+
+        // No identity should be persisted — the probe failed before any of
+        // the post-identity steps ran.
+        let pool = state.node_manager.get_or_init_sled_pool().await;
+        let raw = crate::identity::peek_raw_identity_value(&pool).expect("peek raw identity");
+        assert!(
+            raw.is_none(),
+            "bad-key bootstrap must NOT persist an identity blob; got: {raw:?}"
+        );
+
+        // No ingestion_config.json or sensitive key store file either.
+        assert!(
+            !config_dir.as_path().join("ingestion_config.json").exists(),
+            "bad-key bootstrap must NOT write ingestion_config.json"
+        );
+        assert!(
+            crate::ingestion::anthropic_key_store::load(config_dir.as_path())
+                .expect("load store")
+                .is_none(),
+            "bad-key bootstrap must NOT write the sensitive key store"
+        );
+
+        // And no onboarding marker — bootstrap must remain re-runnable
+        // until the user fixes the key.
+        let marker = tmp.path().join("data").join(".onboarding_complete");
+        assert!(
+            !marker.exists(),
+            "bad-key bootstrap must not write the onboarding marker"
+        );
+
+        std::env::remove_var(FOLDDB_HOME_VAR);
+    }
+
+    #[actix_web::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn bootstrap_soft_warns_on_transient_anthropic_probe_failure() {
+        let _g = home_lock();
+        let tmp = tempfile::tempdir().unwrap();
+        std::env::set_var(FOLDDB_HOME_VAR, tmp.path());
+
+        let server = MockServer::start().await;
+        Mock::given(wm_method("GET"))
+            .and(wm_path("/v1/models"))
+            .respond_with(ResponseTemplate::new(503).set_body_string("upstream down"))
+            .mount(&server)
+            .await;
+        let _probe = ProbeBaseOverride::set(&server.uri());
+
+        let (state, config_dir) = build_app_state(tmp.path());
+        let body = web::Json(BootstrapRequest {
+            name: "test".into(),
+            email: None,
+            birthday: None,
+            ai_provider: Some("anthropic".to_string()),
+            anthropic_api_key: Some("sk-ant-likely-fine".to_string()),
+            ollama_url: None,
+            ollama_model: None,
+            enable_cloud: false,
+            invite_code: None,
+            recovery_phrase: None,
+        });
+        let resp = bootstrap(state, config_dir.clone(), body)
+            .await
+            .respond_to(&actix_web::test::TestRequest::default().to_http_request());
+        assert_eq!(
+            resp.status(),
+            200,
+            "transient probe failure must still complete bootstrap"
+        );
+        let body_bytes = actix_web::body::to_bytes(resp.into_body())
+            .await
+            .unwrap_or_else(|_| panic!("failed to read bootstrap response body"));
+        let parsed: serde_json::Value =
+            serde_json::from_slice(&body_bytes).expect("parse bootstrap response");
+        assert_eq!(parsed["warning"]["warning"], "could_not_validate_key");
+        assert!(
+            parsed["warning"]["detail"].as_str().is_some(),
+            "transient warning must carry a detail string"
+        );
+
+        // The key was good enough for save (we just couldn't confirm) so it
+        // must be persisted alongside the ingestion config.
+        assert!(
+            config_dir.as_path().join("ingestion_config.json").exists(),
+            "transient warning must still persist ingestion config"
+        );
+        assert_eq!(
+            crate::ingestion::anthropic_key_store::load(config_dir.as_path())
+                .expect("load store")
+                .as_deref(),
+            Some("sk-ant-likely-fine"),
+            "transient warning must still persist the api key"
+        );
+
+        std::env::remove_var(FOLDDB_HOME_VAR);
     }
 }
