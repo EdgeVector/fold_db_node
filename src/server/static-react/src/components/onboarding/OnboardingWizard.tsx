@@ -47,6 +47,22 @@ export function isCloudAlreadyActive(): boolean {
   return !!window.localStorage.getItem('exemem_api_key')
 }
 
+// Bootstrap returns `{ ok: false, error: "invalid_anthropic_key", detail }`
+// for a 401/403 from Anthropic's auth probe. The ApiError factory stuffs the
+// parsed body into `response`. These helpers narrow that `unknown`-shaped
+// payload without leaking `any` into the wizard's logic.
+function isInvalidAnthropicKeyError(response: unknown): boolean {
+  if (typeof response !== 'object' || response === null) return false
+  return (response as { error?: unknown }).error === 'invalid_anthropic_key'
+}
+
+function extractInvalidKeyDetail(response: unknown): string {
+  const fallback = 'Anthropic rejected this API key. Double-check the value and try again.'
+  if (typeof response !== 'object' || response === null) return fallback
+  const detail = (response as { detail?: unknown }).detail
+  return typeof detail === 'string' && detail.length > 0 ? detail : fallback
+}
+
 interface ProgressIndicatorProps {
   currentStep: StepId
   steps: StepDef[]
@@ -131,6 +147,16 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
 
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
+  // Surfaced on ConfigureAiStep when the backend probe definitively rejects
+  // the supplied Anthropic key (HTTP 400 `invalid_anthropic_key`). Set when
+  // bootstrap bounces the user back to the AI step so the input field can
+  // render an inline error next to the bad value.
+  const [aiKeyError, setAiKeyError] = useState<string | null>(null)
+  // Soft-warning attached to a successful bootstrap when the Anthropic
+  // probe couldn't run (DNS, 5xx, timeout). Shown as a banner above the
+  // recovery-phrase / next-step view so the user knows ingestion may still
+  // surface a key problem the probe couldn't catch.
+  const [bootstrapWarning, setBootstrapWarning] = useState<string | null>(null)
   const [recoveryWords, setRecoveryWords] = useState<string[] | null>(null)
 
   const markCompleted = useCallback((stepId: StepId) => {
@@ -181,12 +207,22 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
   }) => {
     setSubmitting(true)
     setSubmitError(null)
+    setAiKeyError(null)
+    setBootstrapWarning(null)
     try {
       const req = buildBootstrapRequest(opts)
       const resp = await systemClient.bootstrap(req)
       const data: BootstrapResponse | undefined = resp.data
       if (!resp.success || !data) {
         throw new Error('Bootstrap response missing data')
+      }
+
+      // The backend's Anthropic key probe couldn't return a definitive
+      // verdict (DNS, 5xx, timeout). Bootstrap still succeeded; surface
+      // the warning so the user knows the next ingestion attempt may
+      // bump into a real key problem this probe missed.
+      if (data.warning) {
+        setBootstrapWarning(data.warning.detail || data.warning.warning)
       }
 
       if (data.cloud?.enabled) {
@@ -222,6 +258,15 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
         goToStep('apple-data')
       }
     } catch (e) {
+      // Bad-key probe answer: bounce the user back to the AI step and
+      // render the upstream error inline next to the API key field
+      // (don't navigate forward until they fix or change it).
+      if (isApiError(e) && e.status === 400 && isInvalidAnthropicKeyError(e.response)) {
+        const detail = extractInvalidKeyDetail(e.response)
+        setAiKeyError(detail)
+        goToStep('welcome')
+        return
+      }
       const message = isApiError(e)
         ? (e.toUserMessage() || e.message)
         : e instanceof Error
@@ -258,12 +303,21 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
         return (
           <ConfigureAiStep
             fields={aiFields}
-            onChange={(next) => setAiFields(prev => ({ ...prev, ...next }))}
+            onChange={(next) => {
+              // Any keystroke on the API key field clears the stale
+              // server-rejection error so the user gets clean feedback
+              // when they re-submit.
+              if (aiKeyError && next.anthropicApiKey !== undefined) {
+                setAiKeyError(null)
+              }
+              setAiFields(prev => ({ ...prev, ...next }))
+            }}
             onNext={() => {
               markCompleted('welcome')
               goToStep(cloudActive ? 'apple-data' : 'cloud-backup')
             }}
             onSkip={() => goToStep(cloudActive ? 'apple-data' : 'cloud-backup')}
+            apiKeyError={aiKeyError}
           />
         )
       case 'cloud-backup':
@@ -355,6 +409,22 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
         </div>
 
         <ProgressIndicator currentStep={currentStep} steps={visibleSteps} />
+
+        {bootstrapWarning && currentStep !== 'welcome' && (
+          <div
+            className="card p-3 mb-3 border-gruvbox-yellow"
+            data-testid="bootstrap-warning"
+          >
+            <p className="text-gruvbox-yellow text-xs font-bold">
+              Couldn't verify your Anthropic key
+            </p>
+            <p className="text-secondary text-xs mt-1">{bootstrapWarning}</p>
+            <p className="text-tertiary text-xs mt-1">
+              The key was saved. The next ingestion attempt may surface an error
+              if the probe just couldn't reach Anthropic.
+            </p>
+          </div>
+        )}
 
         <div className="card p-6">
           {renderStep()}

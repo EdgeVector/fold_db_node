@@ -150,12 +150,23 @@ export interface BootstrapCloudInfo {
   exemem_user_hash: string;
 }
 
+/// Soft-warning attached when the Anthropic key probe couldn't return a
+/// definitive verdict (DNS, 5xx, timeout). Mirrors the `{warning, detail}`
+/// shape returned by `POST /api/ingestion/config` for transient failures.
+export interface BootstrapWarning {
+  warning: string;
+  detail: string;
+}
+
 export interface BootstrapResponse {
   public_key: string;
   user_hash: string;
   // Present on fresh-mint; absent when the request supplied a recovery phrase.
   recovery_phrase?: string[];
   cloud?: BootstrapCloudInfo;
+  // Present only when the Anthropic key probe failed transiently. A
+  // definitive bad-key answer is returned as HTTP 400, not 200+warning.
+  warning?: BootstrapWarning;
 }
 
 export interface SyncTriggerResponse {

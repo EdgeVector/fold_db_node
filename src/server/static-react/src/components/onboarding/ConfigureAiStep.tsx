@@ -22,9 +22,13 @@ interface ConfigureAiStepProps {
   onChange: (next: Partial<AiStepFields>) => void
   onNext: () => void
   onSkip: () => void
+  /// Surfaced when bootstrap returned `invalid_anthropic_key`. Shown inline
+  /// next to the API key field so the user can fix the typo without
+  /// hunting through a generic toast.
+  apiKeyError?: string | null
 }
 
-export default function ConfigureAiStep({ fields, onChange, onNext, onSkip }: ConfigureAiStepProps) {
+export default function ConfigureAiStep({ fields, onChange, onNext, onSkip, apiKeyError }: ConfigureAiStepProps) {
   const [ollamaModels, setOllamaModels] = useState<OllamaModel[]>([])
   const [ollamaModelsLoading, setOllamaModelsLoading] = useState(false)
   const [ollamaModelsError, setOllamaModelsError] = useState<string | null>(null)
@@ -153,6 +157,14 @@ export default function ConfigureAiStep({ fields, onChange, onNext, onSkip }: Co
             className="input"
             data-testid="api-key-input"
           />
+          {apiKeyError && (
+            <p
+              className="text-gruvbox-red text-xs mt-1"
+              data-testid="api-key-error"
+            >
+              {apiKeyError}
+            </p>
+          )}
           <p className="mt-1">
             <a
               href="https://console.anthropic.com/settings/keys"
