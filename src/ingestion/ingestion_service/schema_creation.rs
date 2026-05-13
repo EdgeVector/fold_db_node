@@ -290,14 +290,26 @@ impl IngestionService {
         // don't race on creating/expanding the same schema.
         let _lock = self.schema_creation_lock.lock().await;
 
-        // Add schema to the schema service via the node
-        let add_response = {
-            node.add_schema_to_service(&schema).await.map_err(|error| {
-                IngestionError::SchemaCreationError(format!(
+        // Add schema to the schema service via the node. A 409 from the
+        // service (descriptive_name already bound to a different active
+        // canonical) bubbles up as a `FoldDbError::Config` whose message
+        // begins with the sentinel `schema service refused duplicate
+        // descriptive_name '...'` — parse it out into the typed
+        // `SchemaDescriptiveNameConflict` so the UI/CLI sees a clean
+        // "Rename your schema" prompt instead of a wrapped "Failed to
+        // create schema via schema service: <wall of text>".
+        let add_response = match node.add_schema_to_service(&schema).await {
+            Ok(response) => response,
+            Err(error) => {
+                let display = error.to_string();
+                if let Some(typed) = crate::ingestion::error::parse_schema_name_conflict(&display) {
+                    return Err(typed);
+                }
+                return Err(IngestionError::SchemaCreationError(format!(
                     "Failed to create schema via schema service: {}",
                     error
-                ))
-            })?
+                )));
+            }
         };
 
         let schema_response = &add_response.schema;

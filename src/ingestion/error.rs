@@ -60,6 +60,21 @@ pub enum IngestionError {
     /// Connection errors (cannot reach the AI service)
     #[error("{provider} connection error: {message}")]
     ConnectionError { provider: String, message: String },
+
+    /// The schema service refused the proposal because another Approved
+    /// schema with the same `descriptive_name` already exists and the two
+    /// can't be cleanly merged (e.g. cross-`schema_type`). Carries the
+    /// existing canonical hash so the UI / CLI can prompt the user to
+    /// rename or reuse the existing schema instead of growing a duplicate.
+    #[error(
+        "schema service refused duplicate descriptive_name '{descriptive_name}' \
+         (existing canonical: {existing_canonical}): {reason}"
+    )]
+    SchemaDescriptiveNameConflict {
+        descriptive_name: String,
+        existing_canonical: String,
+        reason: String,
+    },
 }
 
 impl IngestionError {
@@ -113,9 +128,69 @@ impl IngestionError {
             Self::InvalidInput(msg) => {
                 format!("Invalid input: {}", msg)
             }
+            Self::SchemaDescriptiveNameConflict {
+                descriptive_name, ..
+            } => {
+                format!(
+                    "There's already a schema called '{}' on this node. \
+                     Rename your new schema or reuse the existing one — \
+                     two schemas can't share a descriptive name.",
+                    descriptive_name,
+                )
+            }
             _ => self.to_string(),
         }
     }
+}
+
+/// Sentinel prefix the schema service emits in its 409 message body. Stable
+/// across versions — `schema_service_client::add_schema` lifts the
+/// `DescriptiveNameConflict` fields into a message string starting with this
+/// phrase. We string-match on it so this code keeps working through the
+/// schema_service rev bump that introduces the typed `add_schema_typed`
+/// path; a follow-up will swap to the typed enum once the rev cascades.
+pub(crate) const SCHEMA_NAME_CONFLICT_SENTINEL: &str =
+    "schema service refused duplicate descriptive_name";
+
+/// Inspect the `Display` form of a `FoldDbError` returned by
+/// `SchemaServiceClient::add_schema` and, if it matches the
+/// schema-service 409 message, parse out the typed conflict fields.
+/// Returns `None` if the error is something else (transport failure,
+/// 5xx, etc).
+pub(crate) fn parse_schema_name_conflict(err_display: &str) -> Option<IngestionError> {
+    if !err_display.contains(SCHEMA_NAME_CONFLICT_SENTINEL) {
+        return None;
+    }
+    // Message shape (see schema_service_client::add_schema):
+    //   "schema service refused duplicate descriptive_name '<name>': \
+    //    an Approved schema with identity_hash '<hash>' is already registered. \
+    //    Reason: <reason>. Rename the new schema or reuse the existing one."
+    let descriptive_name = single_quoted_after(err_display, SCHEMA_NAME_CONFLICT_SENTINEL)?;
+    let existing_canonical = single_quoted_after(err_display, "identity_hash")?;
+    let reason = err_display
+        .find("Reason: ")
+        .map(|i| {
+            let tail = &err_display[i + "Reason: ".len()..];
+            tail.split_once(". Rename")
+                .map(|(r, _)| r.to_string())
+                .unwrap_or_else(|| tail.to_string())
+        })
+        .unwrap_or_else(|| "(reason missing)".to_string());
+    Some(IngestionError::SchemaDescriptiveNameConflict {
+        descriptive_name,
+        existing_canonical,
+        reason,
+    })
+}
+
+/// Pull the first `'...'`-quoted substring that appears after `marker` in
+/// `haystack`. Returns `None` if either the marker or a single-quoted
+/// region after it is missing.
+fn single_quoted_after(haystack: &str, marker: &str) -> Option<String> {
+    let after = haystack.split_once(marker).map(|(_, rest)| rest)?;
+    let start = after.find('\'')? + 1;
+    let end = after[start..].find('\'')?;
+    Some(after[start..start + end].to_string())
 }
 
 /// Classify an HTTP error response from an LLM provider into a specific error variant.
@@ -267,6 +342,64 @@ mod tests {
         // Other variants fall through to Display
         let schema = IngestionError::AIResponseValidationError("parse fail".to_string());
         assert!(schema.user_message().contains("parse fail"));
+    }
+
+    #[test]
+    fn parse_schema_name_conflict_recognises_the_canonical_message() {
+        // Exact shape emitted by schema_service_client::add_schema. Keep in
+        // sync with that crate's wording — `SCHEMA_NAME_CONFLICT_SENTINEL`
+        // pins the prefix.
+        let msg = "Configuration error: schema service refused duplicate \
+                   descriptive_name 'Photography': an Approved schema with \
+                   identity_hash 'abc123def456' is already registered. \
+                   Reason: incoming schema_type HashRange differs from \
+                   existing Hash; cross-schema_type expansion would corrupt \
+                   molecule reads. Rename the new schema or reuse the \
+                   existing one.";
+        let parsed = parse_schema_name_conflict(msg).expect("should parse");
+        match parsed {
+            IngestionError::SchemaDescriptiveNameConflict {
+                descriptive_name,
+                existing_canonical,
+                reason,
+            } => {
+                assert_eq!(descriptive_name, "Photography");
+                assert_eq!(existing_canonical, "abc123def456");
+                assert!(reason.contains("schema_type"));
+                assert!(!reason.contains("Rename"));
+            }
+            other => panic!("expected SchemaDescriptiveNameConflict, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_schema_name_conflict_ignores_unrelated_errors() {
+        assert!(parse_schema_name_conflict("transport timeout").is_none());
+        assert!(parse_schema_name_conflict(
+            "Schema service add schema failed with status 500: oops"
+        )
+        .is_none());
+        assert!(parse_schema_name_conflict("").is_none());
+    }
+
+    #[test]
+    fn schema_descriptive_name_conflict_user_message_is_actionable() {
+        let err = IngestionError::SchemaDescriptiveNameConflict {
+            descriptive_name: "Photography".to_string(),
+            existing_canonical: "abc123".to_string(),
+            reason: "schema_type mismatch".to_string(),
+        };
+        let msg = err.user_message();
+        assert!(
+            msg.contains("Photography"),
+            "user_message must name the conflicting schema; got {:?}",
+            msg
+        );
+        assert!(
+            msg.to_lowercase().contains("rename") || msg.to_lowercase().contains("reuse"),
+            "user_message must tell the user what to do; got {:?}",
+            msg
+        );
     }
 
     #[test]
