@@ -90,7 +90,8 @@ pub async fn execute_query(
 
     query.schema_name =
         crate::handlers::schema_resolution::resolve_schema_name(&processor, &query.schema_name)
-            .await?;
+            .await?
+            .into_canonical_or_err()?;
 
     let limit = limit.unwrap_or(DEFAULT_QUERY_LIMIT).min(MAX_QUERY_LIMIT);
     let offset = offset.unwrap_or(0);

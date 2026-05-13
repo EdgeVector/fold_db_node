@@ -4,6 +4,7 @@ use crate::handlers::query as query_handlers;
 // annotation resolves to the same type registered via `components(schemas(...))`.
 #[allow(unused_imports)]
 use crate::handlers::query::QueryResponse;
+use crate::handlers::schema_resolution::{resolve_schema_name, SchemaResolution};
 use crate::server::http_server::AppState;
 use crate::server::routes::{
     handler_error_to_response, handler_result_to_response, node_or_return,
@@ -13,6 +14,45 @@ use fold_db::schema::types::operations::{Operation, Query};
 use fold_db::schema::types::Schema;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+
+/// Run the descriptive_name resolver and convert an `Ambiguous` outcome into
+/// a 409 [`HttpResponse`] with a structured body listing every candidate
+/// canonical hash, so the caller can pin a future query to one of them.
+/// `Canonical` returns the canonical name (or the input verbatim when no
+/// match was found — downstream then emits its own "not found" error,
+/// preserving prior behaviour).
+///
+/// Both `execute_query` and `execute_mutation` need this exact mapping; the
+/// helper exists to keep the body shape and status code in lockstep between
+/// the two routes.
+async fn resolve_or_conflict_response(
+    processor: &OperationProcessor,
+    requested: &str,
+) -> Result<String, HttpResponse> {
+    match resolve_schema_name(processor, requested).await {
+        Ok(SchemaResolution::Canonical(name)) => Ok(name),
+        Ok(SchemaResolution::Ambiguous { input, candidates }) => {
+            tracing::info!(
+                target: "fold_node::http_server",
+                schema_name = %input,
+                candidates = ?candidates,
+                "rejecting ambiguous descriptive_name with 409"
+            );
+            Err(HttpResponse::Conflict().json(json!({
+                "ok": false,
+                "error": "ambiguous_schema_name",
+                "message": format!(
+                    "descriptive_name '{}' matches {} approved schemas; pin by canonical hash",
+                    input,
+                    candidates.len(),
+                ),
+                "schema_name": input,
+                "ambiguous_schemas": candidates,
+            })))
+        }
+        Err(e) => Err(handler_error_to_response(e)),
+    }
+}
 
 /// Collect every queryable field name the user could already see via
 /// `GET /api/schema/{name}` — plain fields, transform-field keys, and
@@ -129,6 +169,7 @@ pub struct MutationResponse {
     responses(
         (status = 200, description = "Page of query results plus pagination metadata", body = QueryResponse),
         (status = 400, description = "Bad request"),
+        (status = 409, description = "Ambiguous descriptive_name; body lists candidate canonical hashes in `ambiguous_schemas`"),
         (status = 500, description = "Server error")
     )
 )]
@@ -146,7 +187,7 @@ pub async fn execute_query(body: web::Json<Value>, state: web::Data<AppState>) -
         None => (None, None),
     };
 
-    let query_inner: Query = match serde_json::from_value(body) {
+    let mut query_inner: Query = match serde_json::from_value(body) {
         Ok(q) => q,
         Err(e) => {
             tracing::warn!(
@@ -171,6 +212,17 @@ pub async fn execute_query(body: web::Json<Value>, state: web::Data<AppState>) -
 
     let (user_hash, node) = node_or_return!(state);
 
+    // Resolve descriptive_name → canonical hash before any downstream
+    // bookkeeping. A 2+-Approved-schemas-with-the-same-descriptive_name
+    // collision becomes a 409 here, not a silent pick that routes the
+    // query at one of several schemas — see
+    // [`crate::handlers::schema_resolution`].
+    let processor = OperationProcessor::from_ref(&node);
+    match resolve_or_conflict_response(&processor, &query_inner.schema_name).await {
+        Ok(canonical) => query_inner.schema_name = canonical,
+        Err(response) => return response,
+    }
+
     // Loud unknown-field validation: today the resolver silently drops fields
     // that aren't on the schema, so a typo (`title` vs `summary`) is
     // indistinguishable from "schema is empty". When the target resolves to a
@@ -178,7 +230,6 @@ pub async fn execute_query(body: web::Json<Value>, state: web::Data<AppState>) -
     // 400 with the legal field list. Targets that don't resolve as schemas
     // (views, unknown names) fall through so the resolver's own 404 still
     // wins.
-    let processor = OperationProcessor::from_ref(&node);
     if let Ok(Some(schema_with_state)) = processor.get_schema(&query_inner.schema_name).await {
         if let Some((unknown, available)) =
             find_unknown_fields(&schema_with_state.schema, &query_inner.fields)
@@ -234,6 +285,7 @@ pub async fn execute_query(body: web::Json<Value>, state: web::Data<AppState>) -
     responses(
         (status = 200, description = "Mutation accepted", body = MutationResponse),
         (status = 400, description = "Bad request"),
+        (status = 409, description = "Ambiguous descriptive_name; body lists candidate canonical hashes in `ambiguous_schemas`"),
         (status = 500, description = "Server error")
     )
 )]
@@ -241,7 +293,7 @@ pub async fn execute_mutation(
     mutation_data: web::Json<Value>,
     state: web::Data<AppState>,
 ) -> impl Responder {
-    let (schema, fields_and_values, key_value, mutation_type) =
+    let (mut schema, fields_and_values, key_value, mutation_type) =
         match serde_json::from_value::<Operation>(mutation_data.into_inner()) {
             Ok(Operation::Mutation {
                 schema,
@@ -272,6 +324,16 @@ pub async fn execute_mutation(
 
     let (user_hash, node) = node_or_return!(state);
 
+    // Resolve descriptive_name → canonical hash for mutation symmetry with
+    // execute_query — 2+ Approved schemas sharing a descriptive_name become a
+    // 409 here, not a silent pick that could write the molecule into the
+    // wrong schema.
+    let processor = OperationProcessor::from_ref(&node);
+    match resolve_or_conflict_response(&processor, &schema).await {
+        Ok(canonical) => schema = canonical,
+        Err(response) => return response,
+    }
+
     // Loud unknown-field validation, parallel to execute_query above. Without
     // this gate the mutation pipeline silently writes unknown field names into
     // the molecule — a typo in `fields_and_values` is indistinguishable from
@@ -281,7 +343,6 @@ pub async fn execute_mutation(
     // writable) and 400 with the legal field list. Targets that don't resolve
     // as schemas fall through so the resolver's own error wins, matching the
     // query-side contract.
-    let processor = OperationProcessor::from_ref(&node);
     if let Ok(Some(schema_with_state)) = processor.get_schema(&schema).await {
         if let Some((unknown, available)) =
             mutation_unknown_fields(&schema_with_state.schema, &fields_and_values)
@@ -1004,6 +1065,196 @@ mod tests {
                 status,
                 body
             );
+        })
+        .await;
+    }
+
+    // ----- descriptive_name resolution at the route layer -----
+
+    /// Load one Approved HashRange schema whose canonical `name` differs from
+    /// its `descriptive_name`, mimicking how the schema service rewrites
+    /// user-ingested schemas (canonical = identity hash, descriptive = human
+    /// label like "Contacts"). Used to drive the route-layer descriptive_name
+    /// tests.
+    async fn load_named_schema(
+        state: &web::Data<AppState>,
+        canonical: &str,
+        descriptive: &str,
+        fields: &[&str],
+        hash_field: &str,
+    ) {
+        let node = state.node_manager.get_node("test_user").await.unwrap();
+        let mut schema = DeclarativeSchemaDefinition::new(
+            canonical.to_string(),
+            DeclarativeSchemaType::HashRange,
+            Some(KeyConfig {
+                hash_field: Some(hash_field.to_string()),
+                range_field: Some("_rk".to_string()),
+            }),
+            Some(
+                fields
+                    .iter()
+                    .map(|f| f.to_string())
+                    .chain(std::iter::once("_rk".to_string()))
+                    .collect(),
+            ),
+            None,
+            None,
+        );
+        schema.descriptive_name = Some(descriptive.to_string());
+        schema.populate_runtime_fields().unwrap();
+        let db = node.get_fold_db().unwrap();
+        db.schema_manager()
+            .load_schema_internal(schema)
+            .await
+            .unwrap();
+        db.schema_manager()
+            .set_schema_state(canonical, SchemaState::Approved)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn execute_query_accepts_descriptive_name_with_200() {
+        let temp_dir = tempdir().unwrap();
+        let state = create_test_state(&temp_dir).await;
+        // Canonical name is a synthetic 64-hex identity-hash; descriptive
+        // name is the human label that READMEs, the UI, and `folddb query
+        // <NAME>` all use.
+        load_named_schema(
+            &state,
+            "fe331affcd23486a170a2bfb56555e114f7c2371a346b5fe58d2177746f831e3",
+            "Contacts",
+            &["full_name"],
+            "full_name",
+        )
+        .await;
+
+        fold_db::user_context::run_with_user("test_user", async move {
+            let body = serde_json::json!({
+                "schema_name": "Contacts",
+                "fields": ["full_name"],
+            });
+            let req = actix_test::TestRequest::default().to_http_request();
+            let resp = execute_query(web::Json(body), state).await.respond_to(&req);
+            let status = resp.status();
+            let body = body_json(resp).await;
+            assert_eq!(
+                status,
+                StatusCode::OK,
+                "descriptive_name must resolve to canonical hash and return 200; body was {}",
+                body
+            );
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn execute_query_returns_409_on_ambiguous_descriptive_name() {
+        let temp_dir = tempdir().unwrap();
+        let state = create_test_state(&temp_dir).await;
+        // Two Approved schemas share the descriptive_name "Contacts" — the
+        // real-world failure mode that motivated this 409 (see the running
+        // prod with 2x Contacts, 2x CalendarEvent, 2x Photography).
+        let hash_a = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let hash_b = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        load_named_schema(&state, hash_a, "Contacts", &["full_name"], "full_name").await;
+        load_named_schema(&state, hash_b, "Contacts", &["full_name"], "full_name").await;
+
+        fold_db::user_context::run_with_user("test_user", async move {
+            let body = serde_json::json!({
+                "schema_name": "Contacts",
+                "fields": ["full_name"],
+            });
+            let req = actix_test::TestRequest::default().to_http_request();
+            let resp = execute_query(web::Json(body), state).await.respond_to(&req);
+            assert_eq!(
+                resp.status(),
+                StatusCode::CONFLICT,
+                "two Approved schemas sharing a descriptive_name must surface 409, not 200 or 500"
+            );
+
+            let body = body_json(resp).await;
+            assert_eq!(body["ok"], serde_json::json!(false));
+            assert_eq!(body["error"], serde_json::json!("ambiguous_schema_name"));
+            assert_eq!(body["schema_name"], serde_json::json!("Contacts"));
+            let mut candidates: Vec<String> =
+                serde_json::from_value(body["ambiguous_schemas"].clone())
+                    .expect("ambiguous_schemas should be a string array");
+            candidates.sort();
+            assert_eq!(
+                candidates,
+                vec![hash_a.to_string(), hash_b.to_string()],
+                "every Approved canonical hash must appear so the caller can pin one"
+            );
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn execute_mutation_accepts_descriptive_name_with_200() {
+        let temp_dir = tempdir().unwrap();
+        let state = create_test_state(&temp_dir).await;
+        load_named_schema(
+            &state,
+            "fe331affcd23486a170a2bfb56555e114f7c2371a346b5fe58d2177746f831e3",
+            "Contacts",
+            &["full_name"],
+            "full_name",
+        )
+        .await;
+
+        fold_db::user_context::run_with_user("test_user", async move {
+            let body = mutation_body(
+                "Contacts",
+                "create",
+                serde_json::json!({ "full_name": "Ada Lovelace", "_rk": "ada" }),
+            );
+            let req = actix_test::TestRequest::default().to_http_request();
+            let resp = execute_mutation(web::Json(body), state)
+                .await
+                .respond_to(&req);
+            assert_eq!(
+                resp.status(),
+                StatusCode::OK,
+                "descriptive_name on mutation must resolve to canonical and return 200"
+            );
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn execute_mutation_returns_409_on_ambiguous_descriptive_name() {
+        let temp_dir = tempdir().unwrap();
+        let state = create_test_state(&temp_dir).await;
+        let hash_a = "1111111111111111111111111111111111111111111111111111111111111111";
+        let hash_b = "2222222222222222222222222222222222222222222222222222222222222222";
+        load_named_schema(&state, hash_a, "Contacts", &["full_name"], "full_name").await;
+        load_named_schema(&state, hash_b, "Contacts", &["full_name"], "full_name").await;
+
+        fold_db::user_context::run_with_user("test_user", async move {
+            let body = mutation_body(
+                "Contacts",
+                "create",
+                serde_json::json!({ "full_name": "Grace Hopper", "_rk": "grace" }),
+            );
+            let req = actix_test::TestRequest::default().to_http_request();
+            let resp = execute_mutation(web::Json(body), state)
+                .await
+                .respond_to(&req);
+            assert_eq!(
+                resp.status(),
+                StatusCode::CONFLICT,
+                "ambiguous descriptive_name on mutation must surface 409, not write into one"
+            );
+
+            let body = body_json(resp).await;
+            assert_eq!(body["error"], serde_json::json!("ambiguous_schema_name"));
+            let mut candidates: Vec<String> =
+                serde_json::from_value(body["ambiguous_schemas"].clone())
+                    .expect("ambiguous_schemas should be a string array");
+            candidates.sort();
+            assert_eq!(candidates, vec![hash_a.to_string(), hash_b.to_string()]);
         })
         .await;
     }
