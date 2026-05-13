@@ -1870,6 +1870,13 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Ambiguous descriptive_name; body lists candidate canonical hashes in `ambiguous_schemas` */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             /** @description Server error */
             500: {
                 headers: {
@@ -1942,6 +1949,13 @@ export interface operations {
             };
             /** @description Bad request */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Ambiguous descriptive_name; body lists candidate canonical hashes in `ambiguous_schemas` */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

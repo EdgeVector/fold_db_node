@@ -62,8 +62,9 @@ pub async fn execute_mutation_from_components(
     let processor = OperationProcessor::from_ref(node);
     let caller_pub_key = current_caller_pubkey(node);
 
-    let schema =
-        crate::handlers::schema_resolution::resolve_schema_name(&processor, &schema).await?;
+    let schema = crate::handlers::schema_resolution::resolve_schema_name(&processor, &schema)
+        .await?
+        .into_canonical_or_err()?;
 
     let mutation = Mutation::new(
         schema,

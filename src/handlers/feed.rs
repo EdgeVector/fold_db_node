@@ -70,7 +70,9 @@ pub async fn get_feed(
         Some(name) if !name.is_empty() => {
             // Accept either canonical hash or descriptive_name
             let canonical =
-                crate::handlers::schema_resolution::resolve_schema_name(&processor, name).await?;
+                crate::handlers::schema_resolution::resolve_schema_name(&processor, name)
+                    .await?
+                    .into_canonical_or_err()?;
             vec![canonical]
         }
         _ => {
